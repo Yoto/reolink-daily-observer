@@ -13,15 +13,18 @@ triage は画像を扱わないため、撮影場所の説明や抽出閾値を�
 1. 対象日の MP4 を列挙し、転送が完了していることを確認します。
 2. ffprobe で duration / resolution / fps / codec を取得します。
 3. ffmpeg で1秒間隔、長辺1280px、JPEG quality 85のフレームを一時抽出します。
-4. OpenAI の画像入力と Structured Outputs で、1 MP4 = 1 event JSON を生成します。
-5. event JSON と撮影場所の説明、直近の日報履歴を入力に triage を1回実行し、全イベントへ `assessment` / `person_type` / `notable` / `anomaly_score` を付与します。
-6. 閾値以上のスコア、または `notable` が記載されたイベントを要確認として抽出します（抽出はコード側で機械的に行い、モデルの選別に委ねません）。
-7. event JSON と triage 結果を入力に日報を生成し、JSON / Markdown / HTML に描画します。
-8. fingerprint、処理結果、API usage を SQLite に記録し、変更のない再実行をcacheします。
+4. ローカルの人物検出モデルで各フレームを採点し、GenAIへ渡すフレームを選別します。人物のある区間を連結・前後に余白を付けて切り出し、動画の最初と最後のフレームは無条件で残します。
+5. OpenAI の画像入力と Structured Outputs で、1 MP4 = 1 event JSON を生成します。
+6. event JSON と撮影場所の説明、直近の日報履歴を入力に triage を1回実行し、全イベントへ `assessment` / `person_type` / `notable` / `anomaly_score` を付与します。
+7. 閾値以上のスコア、または `notable` が記載されたイベントを要確認として抽出します（抽出はコード側で機械的に行い、モデルの選別に委ねません）。
+8. event JSON と triage 結果を入力に日報を生成し、JSON / Markdown / HTML に描画します。
+9. fingerprint、処理結果、API usage、フレーム選別の実績を SQLite に記録し、変更のない再実行をcacheします。
 
 triage の出力する event_id は必ずローカルの event 記録と突き合わせ、時刻とファイル名はモデル応答ではなく元の event から復元します。triage が失敗した場合も日報は生成され、判定が付かなかったことが日報と終了コード `2` に反映されます。
 
-長い動画はフレームを時系列chunkに分割し、chunk結果を最後に1 eventへ統合します。一時JPEGはコンテナの `/tmp` に置き、処理後に削除します。
+長い動画はフレームを時系列chunkに分割し、chunk結果を最後に1 eventへ統合します。一時JPEGはコンテナの `/tmp` に置き、処理後に削除します。人物検出は抽出済みの一時JPEGを読むだけで、削除の扱いは変わりません。
+
+人物検出の重みはイメージのビルド時に取得して焼き込みます。実行時にネットワークから重みを取得することはなく、日次バッチが外部の到達性に依存しません。
 
 `GENAI_PROVIDER=mock` は Docker、ffprobe、ffmpeg、状態管理、出力までの配管確認専用です。画像内容は解析しません。
 
@@ -163,6 +166,16 @@ frames:
   max_long_edge_px: 1280
   jpeg_quality: 85
   ffmpeg_timeout_sec: 900
+person_filter:
+  enabled: true
+  dry_run: true
+  model: hustvl/yolos-tiny
+  score_threshold_day: 0.20
+  score_threshold_night: 0.10
+  night_saturation_threshold: 0.05
+  merge_gap_sec: 3
+  padding_sec: 2
+  keep_first_last_frame: true
 genai:
   provider: openai
   model: gpt-5.6-luna
@@ -180,6 +193,22 @@ triage:
 processing:
   continue_on_error: true
 ```
+
+`person_filter` は、GenAIへ送るフレームをローカルの人物検出で絞り込む段を制御します。カメラ側のトリガーは人物検知のみですが、Reolinkは録画の前後にプリレコード／ポストレコード区間を必ず付けるため、各動画の先頭と末尾には人物の映っていないフレームが固まって存在します。ここが削減の対象です。
+
+判定はフレーム単位では行いません。検出は数フレーム単位で抜けるため、そのまま切ると系列の途中に穴が空き、動線の連続性が失われます。閾値を超えたフレームを連続区間としてまとめ、区間同士の間隔が `merge_gap_sec` 以下ならその間も採用して結合し、各区間の前後に `padding_sec` の余白を付けます。「近づいてくる」「立ち去る」の文脈を残すためです。
+
+`keep_first_last_frame` は、検出結果によらず動画の最初と最後のフレームを採用します。置き配のように「人が去った後の状態」が情報になるケースを取りこぼさないための保険で、2フレーム分のコストは無視できます。
+
+閾値は再現率側に倒した既定値です。ここで落としたフレームは二度と VLM に届かず、誤って落としたことに後から気づく手段がありません。夜間はIR照明のモノクロ映像になり、RGB前提の検出モデルは再現率が落ちるため、`score_threshold_night` を別に持ちます。昼夜の判定は時刻ではなくフレームの彩度で行います。日没をまたぐ動画、曇天の朝、カメラが早めにIRへ切り替わった場合など、時刻から予測した境界が実際とずれるケースがあるためです。1動画につき1回だけ判定し、途中で閾値が変わらないようにしています。
+
+`dry_run: true` の間は、選別の判定とログ・SQLiteへの記録だけを行い、実際には全フレームをGenAIへ渡します。本番で有効化する前に、削減率と落とされるフレームの妥当性を数日分のログで検証するためのモードです。削減率は「選別が採用したはずのフレーム数」から計算されるので、dry_run のままでも見積りが取れます。
+
+`enabled: false` にすると検出を実行せず、従来どおり全フレームを送信します。検出器の構築に失敗した場合（重みが焼き込まれていない、依存が入っていない等）は設定ミスとして起動時に失敗します。実行中の推論に失敗した場合は、その動画については全フレームを送信して処理を続け、失敗した事実をログとSQLiteに残します。フレームを落とす判断は取り返しがつかない一方、送りすぎは請求で確認できるためです。
+
+選別の設定値はevent cacheのfingerprintに含まれます。閾値を変えたのに古い解析結果が再利用されることはありません。
+
+動画ごとの抽出フレーム数・採用フレーム数・削減率・検出スコアの分布（最大値／中央値／0.1刻みのヒストグラム）・適用された昼夜の閾値・検出処理時間は、既存のAPI usageと同じ形式でSQLiteの `processing_records` に記録されます。集計しやすいスカラー列と、内訳を残すJSON列の両方を持ちます。
 
 `triage` は要確認イベントの絞り込みを制御します。`attention_score_threshold` 以上のスコアが付いたイベントに加え、`notable_always_attention` が `true` の間は `notable` が記載されたイベントもスコアに関わらず抽出されます。スコアは単体では校正が甘いため、両方を併用する既定値のまま運用しながら閾値を調整することを想定しています。
 
