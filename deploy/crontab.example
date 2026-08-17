@@ -1,0 +1,14 @@
+# Install in the crontab of a dedicated user that can access Docker and the
+# configured input/output/state directories. Do not enable this and the systemd
+# timer at the same time.
+#
+# CRON_TZ controls schedule evaluation; TZ is inherited by the command/logs.
+# If the local cron implementation does not support CRON_TZ, set the host time
+# zone to Asia/Tokyo or use deploy/reolink-analyzer.timer instead.
+SHELL=/bin/sh
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+CRON_TZ=Asia/Tokyo
+TZ=Asia/Tokyo
+
+# Start one one-shot container at 04:00.
+0 4 * * * umask 077; cd /opt/reolink-analyzer && /usr/bin/docker compose --env-file .env run --rm analyzer >> /srv/reolink-analysis/reolink-analyzer.log 2>&1

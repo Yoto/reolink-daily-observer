@@ -1,0 +1,38 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "reolink-daily-observer"
+version = "0.1.0"
+description = "One-shot daily semantic observation pipeline for Reolink MP4 recordings"
+readme = "README.md"
+requires-python = ">=3.12,<3.15"
+dependencies = [
+  "openai>=2.0.0,<3",
+  "jinja2>=3.1.6,<4",
+  "pydantic>=2.11.0,<3",
+  "pydantic-settings>=2.10.0,<3",
+  "PyYAML>=6.0.2,<7",
+  "tzdata>=2025.2",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.4.0,<9",
+  "pytest-cov>=6.2.0,<7",
+]
+
+[project.scripts]
+reolink-daily = "app.run_daily:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.coverage.run]
+source = ["app"]
+branch = true

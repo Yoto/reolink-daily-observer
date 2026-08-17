@@ -1,0 +1,20 @@
+[Unit]
+Description=Reolink daily semantic observation (one-shot container)
+Documentation=file:///opt/reolink-analyzer/README.md
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+ConditionPathExists=/opt/reolink-analyzer/docker-compose.yml
+ConditionPathExists=/opt/reolink-analyzer/.env
+
+[Service]
+Type=oneshot
+User=reolink
+Group=docker
+WorkingDirectory=/opt/reolink-analyzer
+ExecStart=/usr/bin/docker compose --project-directory /opt/reolink-analyzer --env-file /opt/reolink-analyzer/.env -f /opt/reolink-analyzer/docker-compose.yml run --rm analyzer
+UMask=0027
+
+# This example assumes the dedicated user can read CAMERA_INPUT_DIR and UID
+# the container user can write ANALYSIS_OUTPUT_DIR/ANALYSIS_STATE_DIR.
+# Membership in the docker group grants powerful host access; restrict it.

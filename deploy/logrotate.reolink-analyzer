@@ -1,0 +1,9 @@
+/srv/reolink-analysis/reolink-analyzer.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0600 reolink reolink
+}

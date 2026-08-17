@@ -1,0 +1,58 @@
+# 防犯カメラ日報
+
+{{ report.date_ja }}
+
+## 本日の概要
+
+{{ report.overview }}
+
+{% if report.recurring_patterns %}
+## 全体に見られた様子
+
+{% for item in report.recurring_patterns %}
+- {{ item }}
+{% endfor %}
+{% endif %}
+
+{% if report.time_periods %}
+## 時間帯別の様子
+
+{% for period in report.time_periods %}
+### {{ period.label }}
+
+{{ period.summary }}
+
+{% if period.event_ids %}参照イベント: {{ period.event_ids | join(', ') }}{% endif %}
+
+{% endfor %}
+{% endif %}
+
+{% if report.representative_events %}
+## 個別に記録された出来事
+
+{% for event in report.representative_events %}
+### {% if event.recording_time %}{{ event.recording_time_display }}ごろ{% else %}録画時刻: 不明{% endif %}
+
+元動画: `{{ event.source_file }}`
+イベントID: `{{ event.event_id }}`
+
+{{ event.description }}
+
+{% endfor %}
+{% endif %}
+
+## 解析状況
+
+- 検出した動画ファイル: {{ report.processing.detected_files }}件
+- 正常解析: {{ report.processing.succeeded }}件
+- キャッシュ再利用: {{ report.processing.cached }}件
+- 未完了転送として保留: {{ report.processing.unstable }}件
+- 解析失敗: {{ report.processing.failed }}件
+
+{% if report.failed_events %}
+### 解析できなかった動画
+
+{% for failure in report.failed_events %}
+- {% if failure.recording_time %}{{ failure.recording_time_display }}{% else %}録画時刻不明{% endif %} — `{{ failure.source_file }}`: {{ failure.error }}
+{% endfor %}
+{% endif %}

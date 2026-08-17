@@ -1,0 +1,33 @@
+services:
+  analyzer:
+    build:
+      context: .
+    image: reolink-daily-observer:local
+    # On Linux, set these to the dedicated host user's numeric IDs so bind
+    # mount permissions work without making output/state world-writable.
+    user: "${ANALYZER_UID:-10001}:${ANALYZER_GID:-10001}"
+    environment:
+      CONFIG_PATH: /config/config.yaml
+      GENAI_PROVIDER: ${GENAI_PROVIDER:-openai}
+      GENAI_MODEL: ${GENAI_MODEL:-gpt-5.6-luna}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - type: bind
+        source: ${CAMERA_INPUT_DIR}
+        target: /data/input
+        read_only: true
+      - type: bind
+        source: ${ANALYSIS_OUTPUT_DIR}
+        target: /data/output
+      - type: bind
+        source: ${ANALYSIS_STATE_DIR}
+        target: /data/state
+      - type: bind
+        source: ./config
+        target: /config
+        read_only: true
+    tmpfs:
+      - /tmp:size=2g,mode=1777
+    network_mode: bridge
+    restart: "no"

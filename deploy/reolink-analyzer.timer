@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Reolink daily observation at 04:00 JST
+
+[Timer]
+OnCalendar=*-*-* 04:00:00 Asia/Tokyo
+Persistent=true
+AccuracySec=1min
+Unit=reolink-analyzer.service
+
+[Install]
+WantedBy=timers.target
