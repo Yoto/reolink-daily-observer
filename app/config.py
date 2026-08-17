@@ -127,7 +127,9 @@ class GenAISettings(SettingsModel):
     max_inline_image_bytes: int = Field(default=13_000_000, gt=0)
     chunk_overlap_frames: int = Field(default=2, ge=0)
     request_timeout_sec: float = Field(default=180.0, gt=0)
-    max_output_tokens: int = Field(default=8192, gt=0)
+    # Triage responds for every event of the day in a single response, so the
+    # ceiling has to clear the busiest day, not the largest single event.
+    max_output_tokens: int = Field(default=32768, gt=0)
     retry: RetrySettings = Field(default_factory=RetrySettings)
     pricing: PricingSettings = Field(default_factory=PricingSettings)
 

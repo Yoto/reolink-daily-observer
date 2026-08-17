@@ -31,7 +31,11 @@ genai:
   max_inline_image_bytes: 13000000
   chunk_overlap_frames: 2
   request_timeout_sec: 180
-  max_output_tokens: 8192
+  # Triage answers for every event of the day in one response, so this scales
+  # with the busiest day rather than with a single event. A 47-event day needs
+  # roughly 9.6k output tokens; 8192 truncated the JSON mid-string and lost the
+  # whole triage stage. Changing this value invalidates cached event JSON.
+  max_output_tokens: 32768
   retry:
     max_attempts: 4
   pricing:

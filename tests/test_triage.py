@@ -631,3 +631,14 @@ def test_an_item_cannot_relate_to_itself() -> None:
             anomaly_score=5,
             related_event_ids=["e0"],
         )
+
+
+def test_shipped_config_clears_the_output_a_full_day_of_triage_needs() -> None:
+    """Triage answers for the whole day in one response, so the ceiling has to
+    clear a busy day. At 8192 a 47-event day truncated the JSON mid-string and
+    the stage was lost entirely; that day measured 9609 output tokens."""
+
+    repo_root = Path(__file__).resolve().parent.parent
+    settings = load_settings(repo_root / "config" / "config.yaml", environ={})
+
+    assert settings.genai.max_output_tokens >= 16384
