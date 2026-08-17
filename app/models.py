@@ -12,7 +12,7 @@ from datetime import date as Date
 from datetime import datetime, time, timedelta
 from enum import Enum
 from pathlib import PurePosixPath
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import (
     BaseModel,
@@ -222,6 +222,58 @@ class SceneChange(TimedStatement):
     """A meaningful scene-level change not fully captured by an interaction."""
 
 
+class FrameFilterStatus(str, Enum):
+    """What the local person filter did to one video's frames."""
+
+    DISABLED = "disabled"
+    APPLIED = "applied"
+    DRY_RUN = "dry_run"
+    FAILED = "failed"
+
+
+class FrameFilterMetadata(SchemaModel):
+    """Accounting for the local person-detection stage of one video.
+
+    ``frames_selected`` is what the selection rules chose and
+    ``frames_sent`` is what actually reached the provider; they differ under
+    ``dry_run``, which is the point of that mode. ``reduction_ratio`` always
+    describes the selection, so a dry run measures the saving it would have
+    made. The score summary is kept so a threshold can be re-tuned later from
+    recorded runs rather than by re-analysing video.
+    """
+
+    status: FrameFilterStatus = FrameFilterStatus.DISABLED
+    detector: NonEmptyText | None = None
+    model: NonEmptyText | None = None
+    lighting: Literal["day", "night"] | None = None
+    saturation: float | None = Field(default=None, ge=0, le=1, allow_inf_nan=False)
+    score_threshold: float | None = Field(default=None, ge=0, le=1, allow_inf_nan=False)
+    frames_extracted: int = Field(default=0, ge=0)
+    frames_selected: int = Field(default=0, ge=0)
+    frames_sent: int = Field(default=0, ge=0)
+    reduction_ratio: float = Field(default=0.0, ge=0, le=1, allow_inf_nan=False)
+    score_max: float | None = Field(default=None, ge=0, le=1, allow_inf_nan=False)
+    score_median: float | None = Field(default=None, ge=0, le=1, allow_inf_nan=False)
+    score_histogram: list[int] = Field(default_factory=list)
+    detection_sec: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    error: str | None = None
+
+    @field_validator("score_histogram")
+    @classmethod
+    def histogram_bins_are_nonnegative(cls, value: list[int]) -> list[int]:
+        if any(count < 0 for count in value):
+            raise ValueError("score histogram bins must be non-negative")
+        return value
+
+    @model_validator(mode="after")
+    def validate_counts(self) -> FrameFilterMetadata:
+        if self.frames_selected > self.frames_extracted:
+            raise ValueError("frames_selected cannot exceed frames_extracted")
+        if self.frames_sent > self.frames_extracted:
+            raise ValueError("frames_sent cannot exceed frames_extracted")
+        return self
+
+
 class ProcessingMetadata(SchemaModel):
     provider: NonEmptyText
     model: NonEmptyText
@@ -234,6 +286,7 @@ class ProcessingMetadata(SchemaModel):
     chunk_count: int = Field(default=1, ge=1)
     processing_time_sec: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     usage: APIUsage = Field(default_factory=APIUsage)
+    frame_filter: FrameFilterMetadata = Field(default_factory=FrameFilterMetadata)
     completed_at: datetime | None = None
 
     @field_validator("completed_at")
@@ -609,6 +662,8 @@ __all__ = [
     "FailedFile",
     "FailedEvent",
     "FeaturedEvent",
+    "FrameFilterMetadata",
+    "FrameFilterStatus",
     "Interaction",
     "Observation",
     "NonEmptyText",
