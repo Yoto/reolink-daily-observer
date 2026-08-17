@@ -40,12 +40,33 @@ genai:
     currency: USD
 
 prompts:
-  event: prompts/event_observation_v1.txt
+  event: prompts/event_observation_v2.txt
   event_synthesis: prompts/event_synthesis_v1.txt
-  daily_report: prompts/daily_report_v1.txt
-  event_version: event_observation_v1
+  triage: prompts/triage_v1.txt
+  daily_report: prompts/daily_report_v2.txt
+  event_version: event_observation_v2
   event_synthesis_version: event_synthesis_v1
-  daily_report_version: daily_report_v1
+  triage_version: triage_v1
+  daily_report_version: daily_report_v2
+
+# The scene description names a household and its habits, so it is kept out of
+# this file, out of version control, and out of the image. Copy
+# config/scene.example.yaml to config/scene.yaml and edit it; compose mounts
+# ./config read-only, so the container reads it at /config/scene.yaml.
+# A relative path is resolved against this file's directory first.
+# ANALYZER_SCENE_FILE overrides it. Leaving it unset is supported: prompts then
+# omit the scene block entirely.
+scene_file: scene.yaml
+
+triage:
+  enabled: true
+  # Events scoring at or above this are surfaced in the report.
+  attention_score_threshold: 7
+  # A non-null "notable" is surfaced regardless of score.
+  notable_always_attention: true
+  # Prior daily reports supplied as a baseline for novelty judgement.
+  history_days: 14
+  max_attention_items: 20
 
 report:
   json: true

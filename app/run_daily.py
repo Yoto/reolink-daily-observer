@@ -23,8 +23,9 @@ from app.event_analyzer import EVENT_ANALYSIS_PIPELINE_VERSION, EventAnalyzer
 from app.genai import create_provider
 from app.genai.base import GenAIProvider
 from app.io_utils import atomic_write_json
-from app.models import APIUsage, Event, FailedEvent, SCHEMA_VERSION
+from app.models import APIUsage, DailyReport, Event, FailedEvent, SCHEMA_VERSION
 from app.state import CacheKey, FileFingerprint, StateStore
+from app.triage import HistoryEntry, TriageOutcome, run_triage
 from app.video import (
     FRAME_EXTRACTION_VERSION,
     FileSnapshot,
@@ -108,6 +109,18 @@ def _daily_command(argv: Sequence[str]) -> int:
                 force=args.force,
             )
 
+        triage = run_triage(
+            target_date=target_date,
+            events=results.events,
+            settings=settings,
+            provider=provider,
+            history=_load_history(
+                output_root=settings.paths.output,
+                target_date=target_date,
+                days=settings.triage.history_days,
+            ),
+        )
+
         report_started = time.perf_counter()
         report = generate_daily_report(
             target_date=target_date,
@@ -120,6 +133,7 @@ def _daily_command(argv: Sequence[str]) -> int:
             ),
             settings=settings,
             provider=provider,
+            triage=triage,
             cache_path=output_directory / "daily_report.json",
             force=args.force,
         )
@@ -130,9 +144,10 @@ def _daily_command(argv: Sequence[str]) -> int:
         report_run_usage = (
             APIUsage() if report.processing.cache_reused else report.processing.usage
         )
-        run_usage = results.new_usage.plus(report_run_usage)
+        run_usage = results.new_usage.plus(report_run_usage).plus(triage.summary.usage)
         LOGGER.info(
             "daily complete target_date=%s success=%d cached=%d unstable=%d failed=%d "
+            "triage_evaluated=%d attention=%d "
             "requests=%d input_tokens=%s output_tokens=%s total_tokens=%s "
             "estimated_cost=%s report_cached=%s report_provider=%s report_model=%s "
             "daily_report_processing_sec=%.3f artifacts=%s",
@@ -141,6 +156,8 @@ def _daily_command(argv: Sequence[str]) -> int:
             results.cached,
             results.unstable,
             len(results.failures),
+            triage.summary.evaluated_count,
+            triage.summary.attention_count,
             run_usage.request_count,
             run_usage.input_tokens,
             run_usage.output_tokens,
@@ -155,7 +172,8 @@ def _daily_command(argv: Sequence[str]) -> int:
         report_fallback = report.processing.provider == "local-fallback" and bool(
             results.events
         )
-        return 2 if results.failures or results.unstable or report_fallback else 0
+        degraded = report_fallback or triage.summary.failed
+        return 2 if results.failures or results.unstable or degraded else 0
     finally:
         provider.close()
 
@@ -506,6 +524,43 @@ def _list_videos(directory: Path, settings: AppSettings) -> list[Path]:
     )
 
 
+def _load_history(
+    *, output_root: Path, target_date: date, days: int
+) -> list[HistoryEntry]:
+    """Read prior daily reports as a compact baseline for novelty judgement.
+
+    Only the narrative digest of each day is used. Full event records would
+    dominate the prompt without adding much signal, and a missing or unreadable
+    day is simply skipped so a first run still works.
+    """
+
+    if days <= 0:
+        return []
+    entries: list[HistoryEntry] = []
+    for offset in range(1, days + 1):
+        day = target_date - timedelta(days=offset)
+        path = output_root / day.isoformat() / "daily_report.json"
+        if not path.is_file():
+            continue
+        try:
+            report = DailyReport.model_validate_json(path.read_text(encoding="utf-8"))
+        except (OSError, ValidationError) as exc:
+            LOGGER.debug("skipping unreadable history for %s: %s", day, exc)
+            continue
+        entries.append(
+            HistoryEntry(
+                date=day.isoformat(),
+                overview=report.overview,
+                recurring_patterns=tuple(report.recurring_patterns),
+                attention_notes=tuple(
+                    item.notable for item in report.attention_items if item.notable
+                ),
+            )
+        )
+    entries.reverse()
+    return entries
+
+
 def _cache_prompt_version(settings: AppSettings) -> str:
     semantic_inputs = {
         "event_prompt": settings.prompts.event_version,
@@ -524,6 +579,9 @@ def _cache_prompt_version(settings: AppSettings) -> str:
         "overlap": settings.genai.chunk_overlap_frames,
         "max_output_tokens": settings.genai.max_output_tokens,
         "timezone": settings.timezone,
+        # The scene description is part of the observation prompt, so a changed
+        # household description must invalidate cached event JSON.
+        "scene": settings.scene.prompt_payload(),
     }
     digest = hashlib.sha256(
         json.dumps(semantic_inputs, sort_keys=True).encode("utf-8")

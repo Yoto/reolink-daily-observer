@@ -25,7 +25,7 @@ from pydantic import (
 )
 
 
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "1.1"
 
 NonEmptyText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 Identifier = Annotated[
@@ -337,6 +337,75 @@ class Event(EventAnalysis):
         return self
 
 
+class PersonType(str, Enum):
+    """Who a visible person appears to be, judged from behaviour."""
+
+    RESIDENT = "resident"
+    VISITOR = "visitor"
+    UNKNOWN = "unknown"
+    NOT_APPLICABLE = "not_applicable"
+
+
+class AttentionItem(SchemaModel):
+    """A judgement about one event, produced by the triage pass.
+
+    Field order is deliberate: the free-text assessment is generated before the
+    numeric score so the score is written against a stated rationale instead of
+    being emitted first and rationalized afterwards.
+    """
+
+    event_id: Identifier
+    assessment: NonEmptyText
+    person_type: PersonType = PersonType.NOT_APPLICABLE
+    notable: NonEmptyText | None = None
+    anomaly_score: int = Field(ge=0, le=10)
+    # Populated locally from the source event, never copied from the model.
+    recording_time: datetime | None = None
+    source_file: NonEmptyText | None = None
+
+    @field_validator("source_file")
+    @classmethod
+    def source_file_is_relative(cls, value: str | None) -> str | None:
+        return None if value is None else _validate_relative_source(value)
+
+    @field_validator("recording_time")
+    @classmethod
+    def recording_time_has_timezone(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value.utcoffset() is None:
+            raise ValueError("recording_time must be timezone-aware")
+        return value
+
+
+class TriageResult(SchemaModel):
+    """The judgement-layer response covering every event of the day."""
+
+    items: list[AttentionItem] = Field(default_factory=list)
+    day_notes: list[NonEmptyText] = Field(default_factory=list)
+
+
+class TriageSummary(SchemaModel):
+    """Deterministic accounting for the triage pass."""
+
+    enabled: bool = True
+    provider: NonEmptyText | None = None
+    model: NonEmptyText | None = None
+    prompt_version: Identifier | None = None
+    evaluated_count: int = Field(default=0, ge=0)
+    attention_count: int = Field(default=0, ge=0)
+    score_threshold: int = Field(default=7, ge=0, le=10)
+    person_type_totals: dict[NonEmptyText, int] = Field(default_factory=dict)
+    usage: APIUsage = Field(default_factory=APIUsage)
+    failed: bool = False
+
+    @model_validator(mode="after")
+    def validate_counts(self) -> TriageSummary:
+        if self.attention_count > self.evaluated_count:
+            raise ValueError("attention_count cannot exceed evaluated_count")
+        if any(count < 0 for count in self.person_type_totals.values()):
+            raise ValueError("person type totals must be non-negative")
+        return self
+
+
 class TimePeriodSummary(SchemaModel):
     label: NonEmptyText
     start_local: time
@@ -432,12 +501,15 @@ class DailyReport(SchemaModel):
     title: NonEmptyText = "防犯カメラ日報"
     event_count: int = Field(ge=0)
     overview: NonEmptyText
+    attention_items: list[AttentionItem] = Field(default_factory=list)
+    day_notes: list[NonEmptyText] = Field(default_factory=list)
     time_periods: list[TimePeriodSummary] = Field(default_factory=list)
     recurring_patterns: list[NonEmptyText] = Field(default_factory=list)
     entity_totals: dict[NonEmptyText, int] = Field(default_factory=dict)
     representative_events: list[RepresentativeEvent] = Field(default_factory=list)
     source_event_ids: list[Identifier] = Field(default_factory=list)
     processing_summary: ProcessingSummary
+    triage_summary: TriageSummary = Field(default_factory=TriageSummary)
     processing: ReportProcessingMetadata
 
     @field_validator("timezone")
@@ -476,9 +548,18 @@ class DailyReport(SchemaModel):
             for event_id in period.event_ids
         }
         referenced.update(item.event_id for item in self.representative_events)
+        referenced.update(item.event_id for item in self.attention_items)
         unknown = referenced - known
         if unknown:
             raise ValueError(f"report references unknown event IDs: {sorted(unknown)}")
+
+        attention_ids = [item.event_id for item in self.attention_items]
+        if len(set(attention_ids)) != len(attention_ids):
+            raise ValueError("attention_items must reference each event at most once")
+        if self.triage_summary.attention_count != len(self.attention_items):
+            raise ValueError("triage_summary.attention_count must match attention_items")
+        if self.triage_summary.evaluated_count > self.event_count:
+            raise ValueError("triage cannot evaluate more events than the day contains")
         return self
 
 
@@ -493,6 +574,7 @@ DailyProcessingSummary = ProcessingSummary
 
 __all__ = [
     "APIUsage",
+    "AttentionItem",
     "Certainty",
     "DailyProcessingSummary",
     "DailyReport",
@@ -507,6 +589,7 @@ __all__ = [
     "Interaction",
     "Observation",
     "NonEmptyText",
+    "PersonType",
     "ProcessingMetadata",
     "ProcessingSummary",
     "ReportProcessingMetadata",
@@ -515,6 +598,8 @@ __all__ = [
     "SceneChange",
     "TimeConfidence",
     "TimePeriodSummary",
+    "TriageResult",
+    "TriageSummary",
     "VideoMetadata",
     "RepresentativeEvent",
 ]

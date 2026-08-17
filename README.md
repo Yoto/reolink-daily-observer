@@ -1,6 +1,10 @@
 # Reolink Daily Observer PoC
 
-Reolink RLC-823S1 が FTP 転送した MP4 を日単位で観察し、1動画ごとの event JSON と、その日の `daily_report.json` / `.md` / `.html` を生成する PoC です。映像から直接観察できる出来事を客観的・時系列的に記録し、危険性・犯罪可能性・異常度などの判定は行いません。
+Reolink RLC-823S1 が FTP 転送した MP4 を日単位で観察し、1動画ごとの event JSON と、その日の `daily_report.json` / `.md` / `.html` を生成する PoC です。
+
+観察と判定は分離しています。event JSON は映像から直接確認できる事実だけの客観的な記録で、危険性や犯罪可能性の判定を含みません。そのうえで triage 段が event JSON をテキストとして読み、住人が実際に確認すべきイベントだけを抽出します。日報は要確認イベントを先頭に置き、該当がなければその旨を明示します。
+
+triage は画像を扱わないため、撮影場所の説明や抽出閾値を変更しても、動画を再解析せずに判定だけをやり直せます。
 
 既定の実行環境は Windows + Docker Desktop の Linux コンテナです。入力 MP4 は read-only で mount し、移動・変更・削除しません。
 
@@ -10,8 +14,12 @@ Reolink RLC-823S1 が FTP 転送した MP4 を日単位で観察し、1動画ご
 2. ffprobe で duration / resolution / fps / codec を取得します。
 3. ffmpeg で1秒間隔、長辺1280px、JPEG quality 85のフレームを一時抽出します。
 4. OpenAI の画像入力と Structured Outputs で、1 MP4 = 1 event JSON を生成します。
-5. event JSON だけを入力にして日報を生成し、JSON / Markdown / HTML に描画します。
-6. fingerprint、処理結果、API usage を SQLite に記録し、変更のない再実行をcacheします。
+5. event JSON と撮影場所の説明、直近の日報履歴を入力に triage を1回実行し、全イベントへ `assessment` / `person_type` / `notable` / `anomaly_score` を付与します。
+6. 閾値以上のスコア、または `notable` が記載されたイベントを要確認として抽出します（抽出はコード側で機械的に行い、モデルの選別に委ねません）。
+7. event JSON と triage 結果を入力に日報を生成し、JSON / Markdown / HTML に描画します。
+8. fingerprint、処理結果、API usage を SQLite に記録し、変更のない再実行をcacheします。
+
+triage の出力する event_id は必ずローカルの event 記録と突き合わせ、時刻とファイル名はモデル応答ではなく元の event から復元します。triage が失敗した場合も日報は生成され、判定が付かなかったことが日報と終了コード `2` に反映されます。
 
 長い動画はフレームを時系列chunkに分割し、chunk結果を最後に1 eventへ統合します。一時JPEGはコンテナの `/tmp` に置き、処理後に削除します。
 
@@ -32,6 +40,7 @@ Copy-Item -LiteralPath .env.example -Destination .env
 New-Item -ItemType Directory -Force -Path C:\reolink-analysis\output
 New-Item -ItemType Directory -Force -Path C:\reolink-analysis\state
 notepad .env
+notepad config\scene.yaml
 ```
 
 `.env` の例:
@@ -57,6 +66,32 @@ API key はチャット、ソースコード、YAML、PowerShellのコマンド�
 C:\reolink\2026\08\16\*.mp4
 C:\reolink\2026-08-16\*.mp4
 ```
+
+## 撮影場所の説明 (scene)
+
+`config/scene.yaml` は、このカメラが普段何を映しているかを記述するファイルです。世帯構成や生活パターンを含むため、Git にもイメージにも入りません（`.gitignore` と `.dockerignore` の両方で除外しています）。compose は `./config` を `/config` に read-only で mount するため、コンテナは `/config/scene.yaml` として読みます。
+
+`config/scene.example.yaml` をコピーして編集してください。全項目が省略可能で、未設定の項目はプロンプトから丸ごと省かれます。ファイル自体が無い場合は警告を出して scene なしで動作します。
+
+| 項目 | 内容 |
+| --- | --- |
+| `location` | 敷地の種別と周辺環境 |
+| `camera_view` | 画角に入る範囲。PTZ で巡回する先も含める |
+| `household` | 世帯構成と普段の行動。役割で書き、個人名は不要 |
+| `routine_patterns` | ほぼ毎日発生し、指摘不要な行動 |
+| `known_vehicles` | 自宅の車両 |
+| `expected_visitors` | 配達や収集など想定内の来訪 |
+| `notes` | 死角、画角に入る隣家、季節要因など |
+
+外見ではなく振る舞いを書いてください。「白い車が停まっている」より「平日朝7時台から8時台に自転車で出入口へ向かう」「玄関はスマートロックで、スマートフォンを近づけて解錠する」のような記述が、住人と判別不能な人物の切り分けに直接効きます。triage プロンプトは外見（性別、年齢、服装、体格）を判断根拠にしないよう明示的に指示しています。
+
+別の場所へ置く場合は `ANALYZER_SCENE_FILE` で上書きできます。
+
+```
+docker compose --env-file .env run --rm -e ANALYZER_SCENE_FILE=/config/scene.local.yaml analyzer
+```
+
+scene を変更すると観察プロンプトの内容が変わるため、event cache は自動的に無効化され、次回実行時に対象日が再解析されます。
 
 ## 実行
 
@@ -133,9 +168,22 @@ genai:
   chunk_overlap_frames: 2
   request_timeout_sec: 180
   max_output_tokens: 8192
+scene_file: scene.yaml
+triage:
+  enabled: true
+  attention_score_threshold: 7
+  notable_always_attention: true
+  history_days: 14
+  max_attention_items: 20
 processing:
   continue_on_error: true
 ```
+
+`triage` は要確認イベントの絞り込みを制御します。`attention_score_threshold` 以上のスコアが付いたイベントに加え、`notable_always_attention` が `true` の間は `notable` が記載されたイベントもスコアに関わらず抽出されます。スコアは単体では校正が甘いため、両方を併用する既定値のまま運用しながら閾値を調整することを想定しています。
+
+`history_days` は、普段との差分を判断させるために triage へ渡す過去の日報の日数です。過去の日報が無い状態でも動作しますが、「その日だけ普段と違う」種類の指摘は履歴が溜まるまで出にくくなります。渡すのは各日の概要と傾向、要注意記載だけで、過去のevent JSON全体は送信しません。
+
+`enabled: false` にすると triage を実行せず、要確認セクションのない従来どおりの日報になります。
 
 `gpt-5.6-luna` はコストを抑えた既定値です。model ID、利用可否、料金はOpenAI側で変更され得るため、実行前に契約Projectで確認してください。料金見積りは `config/config.yaml` の単価による参考値で、請求画面が正です。
 
@@ -165,4 +213,7 @@ uv run pytest -W error
 - MP4ファイル名、event JSON、日報、SQLite、ログには在宅状況などが表れる可能性があります。
 - 出力・state・logディレクトリは本人または専用実行ユーザーだけが読める場所に置いてください。
 - HTMLはstandaloneですが、信頼できない相手へ公開しないでください。
-- APIへ送信するのは縮小JPEGとpromptです。日報段階ではevent JSONだけを送信します。
+- APIへ送信するのは縮小JPEGとpromptです。triage段と日報段ではevent JSONとテキストだけを送信します。
+- `config/scene.yaml` には世帯構成と生活パターンが含まれます。`.gitignore` と `.dockerignore` の両方で除外していますが、`git add -f` やイメージの外部公開では失われる保護なので注意してください。
+- scene の内容は毎回のtriageプロンプトに含まれてAPIへ送信されます。送信して差し支えない粒度で記述してください。
+- triage は人物を resident / visitor / unknown に分類しますが、外見や属性ではなく振る舞いのみを根拠とするよう指示しています。この分類は確認対象を絞るための目安であり、個人の識別ではありません。
