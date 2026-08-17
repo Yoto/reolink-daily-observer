@@ -351,17 +351,26 @@ class AttentionItem(SchemaModel):
 
     Field order is deliberate: the free-text assessment is generated before the
     numeric score so the score is written against a stated rationale instead of
-    being emitted first and rationalized afterwards.
+    being emitted first and rationalized afterwards. ``routine_explanation``
+    comes before ``notable`` so a routine match is considered before the model
+    decides whether anything is genuinely unexplained.
     """
 
     event_id: Identifier
     assessment: NonEmptyText
     person_type: PersonType = PersonType.NOT_APPLICABLE
+    # Which documented routine, if any, accounts for this event. Present means
+    # "there is an ordinary explanation", which caps the score locally.
+    routine_explanation: NonEmptyText | None = None
+    # A label shared by every event belonging to one real-world occurrence, so
+    # a single visit split across several clips is reported once.
+    occurrence_id: NonEmptyText | None = None
     notable: NonEmptyText | None = None
     anomaly_score: int = Field(ge=0, le=10)
-    # Populated locally from the source event, never copied from the model.
+    # Populated locally from the source events, never copied from the model.
     recording_time: datetime | None = None
     source_file: NonEmptyText | None = None
+    related_event_ids: list[Identifier] = Field(default_factory=list)
 
     @field_validator("source_file")
     @classmethod
@@ -374,6 +383,14 @@ class AttentionItem(SchemaModel):
         if value is not None and value.utcoffset() is None:
             raise ValueError("recording_time must be timezone-aware")
         return value
+
+    @model_validator(mode="after")
+    def event_is_not_its_own_relation(self) -> AttentionItem:
+        if self.event_id in self.related_event_ids:
+            raise ValueError("related_event_ids must not repeat the item's own event")
+        if len(set(self.related_event_ids)) != len(self.related_event_ids):
+            raise ValueError("related_event_ids must be unique")
+        return self
 
 
 class TriageResult(SchemaModel):
@@ -392,6 +409,10 @@ class TriageSummary(SchemaModel):
     prompt_version: Identifier | None = None
     evaluated_count: int = Field(default=0, ge=0)
     attention_count: int = Field(default=0, ge=0)
+    # Events folded into another item because they belong to one occurrence.
+    grouped_count: int = Field(default=0, ge=0)
+    # Events whose score was capped because a documented routine explains them.
+    routine_explained_count: int = Field(default=0, ge=0)
     score_threshold: int = Field(default=7, ge=0, le=10)
     person_type_totals: dict[NonEmptyText, int] = Field(default_factory=dict)
     usage: APIUsage = Field(default_factory=APIUsage)
@@ -549,6 +570,8 @@ class DailyReport(SchemaModel):
         }
         referenced.update(item.event_id for item in self.representative_events)
         referenced.update(item.event_id for item in self.attention_items)
+        for item in self.attention_items:
+            referenced.update(item.related_event_ids)
         unknown = referenced - known
         if unknown:
             raise ValueError(f"report references unknown event IDs: {sorted(unknown)}")

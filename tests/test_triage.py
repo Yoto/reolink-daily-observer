@@ -94,6 +94,26 @@ def triage_payload(*specs: tuple[str, int, str | None, str]) -> dict[str, object
     }
 
 
+def triage_item(
+    event_id: str,
+    score: int,
+    *,
+    notable: str | None = None,
+    person_type: str = "resident",
+    routine_explanation: str | None = None,
+    occurrence_id: str | None = None,
+) -> dict[str, object]:
+    return {
+        "event_id": event_id,
+        "assessment": "判断根拠。",
+        "person_type": person_type,
+        "routine_explanation": routine_explanation,
+        "occurrence_id": occurrence_id,
+        "notable": notable,
+        "anomaly_score": score,
+    }
+
+
 def test_threshold_and_notable_both_select_attention_items() -> None:
     events = [build_event(f"e{index}") for index in range(4)]
     provider = ScriptedProvider(
@@ -423,3 +443,202 @@ def test_scene_file_can_be_redirected_by_environment(tmp_path: Path) -> None:
     settings = load_settings(config, environ={"ANALYZER_SCENE_FILE": str(external)})
 
     assert settings.scene.location == "環境変数指定"
+
+
+def test_routine_explained_events_are_capped_below_the_threshold() -> None:
+    """Unresolved detail in an ordinary activity must not reach attention."""
+
+    events = [build_event("e0"), build_event("e1")]
+    provider = ScriptedProvider(
+        {
+            "TriageResult": {
+                "items": [
+                    triage_item(
+                        "e0",
+                        8,
+                        routine_explanation="routine_patterns の早朝の新聞配達に該当",
+                    ),
+                    triage_item("e1", 8, person_type="unknown"),
+                ],
+                "day_notes": [],
+            }
+        }
+    )
+
+    outcome = run_triage(
+        target_date=date(2026, 8, 16),
+        events=events,
+        settings=AppSettings(),
+        provider=provider,
+    )
+
+    capped = {item.event_id: item.anomaly_score for item in outcome.all_items}
+    assert capped["e0"] == 4
+    assert capped["e1"] == 8
+    assert [item.event_id for item in outcome.attention_items] == ["e1"]
+    assert outcome.summary.routine_explained_count == 1
+
+
+def test_a_routine_event_with_a_notable_finding_is_not_capped() -> None:
+    """A documented routine explains the activity, not an unexplained finding."""
+
+    provider = ScriptedProvider(
+        {
+            "TriageResult": {
+                "items": [
+                    triage_item(
+                        "e0",
+                        9,
+                        notable="施錠部への干渉が記録されている",
+                        routine_explanation="expected_visitors の配達に該当",
+                    )
+                ],
+                "day_notes": [],
+            }
+        }
+    )
+
+    outcome = run_triage(
+        target_date=date(2026, 8, 16),
+        events=[build_event("e0")],
+        settings=AppSettings(),
+        provider=provider,
+    )
+
+    assert outcome.all_items[0].anomaly_score == 9
+    assert outcome.summary.routine_explained_count == 0
+
+
+def test_one_occurrence_across_several_clips_is_reported_once() -> None:
+    events = [build_event(f"e{index}", hour=15 + index) for index in range(3)]
+    provider = ScriptedProvider(
+        {
+            "TriageResult": {
+                "items": [
+                    triage_item("e0", 5, person_type="visitor", occurrence_id="visit-pm"),
+                    triage_item(
+                        "e1",
+                        8,
+                        person_type="visitor",
+                        occurrence_id="visit-pm",
+                        notable="見慣れない車両が敷地内に停車している",
+                    ),
+                    triage_item("e2", 6, person_type="visitor", occurrence_id="visit-pm"),
+                ],
+                "day_notes": [],
+            }
+        }
+    )
+
+    outcome = run_triage(
+        target_date=date(2026, 8, 16),
+        events=events,
+        settings=AppSettings(),
+        provider=provider,
+    )
+
+    assert len(outcome.attention_items) == 1
+    leader = outcome.attention_items[0]
+    assert leader.event_id == "e1"
+    assert leader.related_event_ids == ["e0", "e2"]
+    assert outcome.summary.grouped_count == 2
+    # Every event is still evaluated and counted, only the reporting is folded.
+    assert outcome.summary.evaluated_count == 3
+
+
+def test_grouping_can_be_disabled() -> None:
+    events = [build_event("e0"), build_event("e1")]
+    provider = ScriptedProvider(
+        {
+            "TriageResult": {
+                "items": [
+                    triage_item("e0", 8, occurrence_id="visit-pm"),
+                    triage_item("e1", 8, occurrence_id="visit-pm"),
+                ],
+                "day_notes": [],
+            }
+        }
+    )
+    settings = AppSettings.model_validate({"triage": {"group_related_events": False}})
+
+    outcome = run_triage(
+        target_date=date(2026, 8, 16),
+        events=events,
+        settings=settings,
+        provider=provider,
+    )
+
+    assert len(outcome.attention_items) == 2
+    assert outcome.summary.grouped_count == 0
+
+
+def test_related_events_are_rendered_and_validated(tmp_path: Path) -> None:
+    events = [build_event("e0", hour=15), build_event("e1", hour=16)]
+    provider = ScriptedProvider(
+        {
+            "TriageResult": {
+                "items": [
+                    triage_item("e0", 4, person_type="visitor", occurrence_id="visit"),
+                    triage_item(
+                        "e1",
+                        8,
+                        person_type="unknown",
+                        occurrence_id="visit",
+                        notable="用件が読み取れないまま滞留している",
+                    ),
+                ],
+                "day_notes": [],
+            },
+            "DailyNarrative": {
+                "overview": "午後に1件の要確認イベントがあった。",
+                "time_periods": [],
+                "recurring_patterns": [],
+                "representative_events": [],
+            },
+        }
+    )
+    settings = AppSettings()
+
+    triage = run_triage(
+        target_date=date(2026, 8, 16),
+        events=events,
+        settings=settings,
+        provider=provider,
+    )
+    report = generate_daily_report(
+        target_date=date(2026, 8, 16),
+        events=events,
+        stats=DailyRunStats(detected_files=2),
+        settings=settings,
+        provider=provider,
+        triage=triage,
+    )
+    artifacts = render_daily_report(
+        report, output_directory=tmp_path, settings=settings
+    )
+
+    markdown = artifacts["markdown"].read_text(encoding="utf-8")
+    assert "要確認 1件" in markdown
+    assert "同じ出来事の関連動画: 1件" in markdown
+    assert "e0" in markdown
+
+
+def test_an_item_cannot_relate_to_itself() -> None:
+    with pytest.raises(ValueError, match="must not repeat"):
+        AttentionItem(
+            event_id="e0",
+            assessment="根拠",
+            anomaly_score=5,
+            related_event_ids=["e0"],
+        )
+
+
+def test_shipped_config_clears_the_output_a_full_day_of_triage_needs() -> None:
+    """Triage answers for the whole day in one response, so the ceiling has to
+    clear a busy day. At 8192 a 47-event day truncated the JSON mid-string and
+    the stage was lost entirely; that day measured 9609 output tokens."""
+
+    repo_root = Path(__file__).resolve().parent.parent
+    settings = load_settings(repo_root / "config" / "config.yaml", environ={})
+
+    assert settings.genai.max_output_tokens >= 16384
