@@ -27,6 +27,19 @@ services:
         source: ./config
         target: /config
         read_only: true
+      # The Dockerfile still COPYs these, so a published image stays
+      # self-contained. During the PoC the prompts change far more often than
+      # the code, and an edit that is not rebuilt into the image is invisible:
+      # the run succeeds and silently uses the old prompt. Overlaying the
+      # working tree means what is on disk is what ran.
+      - type: bind
+        source: ./prompts
+        target: /opt/analyzer/prompts
+        read_only: true
+      - type: bind
+        source: ./templates
+        target: /opt/analyzer/templates
+        read_only: true
     tmpfs:
       - /tmp:size=2g,mode=1777
     network_mode: bridge

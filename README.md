@@ -113,6 +113,8 @@ docker compose --env-file .env run --rm analyzer
 docker compose --env-file .env run --rm analyzer --date 2026-08-16
 ```
 
+`prompts/` と `templates/` は Dockerfile の `COPY` でイメージに焼き込まれますが、compose では作業ツリーを read-only でマウントして上書きします。プロンプトやテンプレートの編集は再ビルドなしで次回の実行に反映されます。`app/` 以下のコードを変更した場合は再ビルドが必要です。
+
 単一動画:
 
 ```powershell
