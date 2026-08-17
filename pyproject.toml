@@ -18,10 +18,32 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Local person detection. Kept out of the default dependencies because torch is
+# two orders of magnitude larger than everything else here, and neither the
+# tests nor a run with person_filter disabled need it. The container image
+# installs this extra; `uv sync` on a development machine does not.
+detect = [
+  "torch>=2.6,<3",
+  "transformers>=4.49,<5",
+  "pillow>=11.0,<12",
+]
 dev = [
   "pytest>=8.4.0,<9",
   "pytest-cov>=6.2.0,<7",
 ]
+
+[tool.uv.sources]
+# The default PyPI wheel drags in the CUDA runtime. The deployment target is a
+# Ryzen 7 6800U with no GPU, so the CPU build keeps several gigabytes out of
+# the image. macOS wheels are CPU-only on PyPI already and are left alone.
+torch = [
+  { index = "pytorch-cpu", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [project.scripts]
 reolink-daily = "app.run_daily:main"

@@ -15,10 +15,24 @@ WORKDIR /opt/analyzer
 
 COPY pyproject.toml uv.lock README.md ./
 RUN pip install uv==0.11.26 \
-    && uv sync --frozen --no-dev --no-install-project
+    && uv sync --frozen --no-dev --extra detect --no-install-project
 
 COPY app ./app
-RUN uv sync --frozen --no-dev
+RUN uv sync --frozen --no-dev --extra detect
+
+# Bake the detector weights into the image. The daily batch runs unattended at
+# 04:00 and must not fail because Hugging Face is unreachable, so nothing is
+# fetched at run time and the offline flags below make that a hard guarantee
+# rather than a convention.
+ARG PERSON_DETECTOR_MODEL=hustvl/yolos-tiny
+ENV PERSON_DETECTOR_MODEL_DIR=/opt/analyzer/models/person-detector
+COPY scripts/fetch_person_model.py ./scripts/fetch_person_model.py
+RUN PYTHONPATH=/opt/analyzer python scripts/fetch_person_model.py \
+        "${PERSON_DETECTOR_MODEL}" "${PERSON_DETECTOR_MODEL_DIR}" \
+    && rm -rf /root/.cache/huggingface
+ENV HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1 \
+    HF_HUB_DISABLE_TELEMETRY=1
 
 COPY config ./config
 COPY prompts ./prompts

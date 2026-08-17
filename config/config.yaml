@@ -23,6 +23,37 @@ frames:
   jpeg_quality: 85
   ffmpeg_timeout_sec: 900
 
+# Local person detection between frame extraction and the provider. Reolink
+# adds a pre-record and post-record margin to every clip, so the beginning and
+# end of each file hold a block of frames with nobody in them.
+person_filter:
+  enabled: true
+  # Score and log the selection but still send every frame. Leave this on until
+  # a few days of logs confirm the reduction rate and the discarded frames; a
+  # frame dropped here never reaches the VLM and leaves no trace in the report.
+  dry_run: true
+  backend: huggingface
+  model: hustvl/yolos-tiny
+  # Baked into the image at build time by scripts/fetch_person_model.py. The
+  # daily batch must not depend on Hugging Face being reachable at 04:00.
+  model_dir: /opt/analyzer/models/person-detector
+  # Recall-biased on purpose. A false positive costs one image; a false
+  # negative costs the only record of what happened.
+  score_threshold_day: 0.20
+  # IR footage is monochrome and off-distribution for a COCO-trained detector.
+  score_threshold_night: 0.10
+  # Mean chroma at or below this marks a clip as IR/monochrome.
+  night_saturation_threshold: 0.05
+  # Fill gaps this long between detected stretches, then pad both ends, so the
+  # approach and the departure stay in the sequence.
+  merge_gap_sec: 3
+  padding_sec: 2
+  # A parcel on the doorstep is only visible after the person has left.
+  keep_first_last_frame: true
+  batch_size: 8
+  # 0 lets torch pick; set it to leave CPU headroom for anything else on the box.
+  threads: 0
+
 genai:
   provider: openai
   model: gpt-5.6-luna
