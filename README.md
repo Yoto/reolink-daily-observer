@@ -199,6 +199,22 @@ wrapperは `docker compose run --rm analyzer` を1回実行し、その終了コ
 
 Linux移行用の例は `deploy/reolink-analyzer.service`、`.timer`、`crontab.example` にあります。systemd timerとcronはどちらか一方だけを使用してください。
 
+## トラブルシューティング
+
+### `exec /usr/local/bin/reolink-analyzer: no such file or directory`
+
+ビルドは成功するのに実行時にこのエラーが出る場合、entrypointスクリプトの改行コードがCRLFになっています。`#!/bin/sh` の行末にCRが付くと、カーネルは `/bin/sh\r` というインタプリタを探して失敗し、このメッセージを返します。スクリプト自体は存在しています。
+
+Git for Windows は既定で `core.autocrlf=true` のため、チェックアウト時にLFがCRLFへ変換されるのが原因です。`.gitattributes` で `*.sh` をLF固定にしているので、既存のワーキングツリーを再正規化してください。
+
+```
+git rm --cached -r .
+git reset --hard
+docker compose build --no-cache
+```
+
+Dockerfile側でもビルド時にCRを除去するため、リポジトリを更新すれば再ビルドだけで解消します。
+
 ## 開発・テスト
 
 ```powershell

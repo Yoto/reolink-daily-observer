@@ -29,6 +29,7 @@ RUN useradd --create-home --uid 10001 analyzer \
     && mkdir -p /data/input /data/output /data/state \
     && chown -R analyzer:analyzer /data/output /data/state \
     && chmod 700 /data/output /data/state \
+    && sed -i 's/\r$//' /usr/local/bin/reolink-analyzer \
     && chmod 755 /usr/local/bin/reolink-analyzer
 
 USER analyzer
