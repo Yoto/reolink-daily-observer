@@ -46,6 +46,19 @@ class DayResults:
     events: list[Event] = field(default_factory=list)
     failures: list[FailedEvent] = field(default_factory=list)
     new_usage: APIUsage = field(default_factory=APIUsage)
+    # Person-filter totals for freshly analysed videos only. Cached events
+    # report the counts of the run that produced them, and adding those here
+    # would make a mostly cached day look like a huge saving.
+    frames_extracted: int = 0
+    frames_selected: int = 0
+    frames_sent: int = 0
+    detection_sec: float = 0.0
+
+    @property
+    def frame_reduction_ratio(self) -> float | None:
+        if self.frames_extracted <= 0:
+            return None
+        return 1.0 - (self.frames_selected / self.frames_extracted)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -93,6 +106,7 @@ def _daily_command(argv: Sequence[str]) -> int:
     event_directory.mkdir(parents=True, exist_ok=True)
 
     provider = create_provider(settings)
+    analyzer: EventAnalyzer | None = None
     try:
         analyzer = EventAnalyzer(settings, provider)
         with StateStore(
@@ -148,6 +162,8 @@ def _daily_command(argv: Sequence[str]) -> int:
         LOGGER.info(
             "daily complete target_date=%s success=%d cached=%d unstable=%d failed=%d "
             "triage_evaluated=%d attention=%d "
+            "frames_extracted=%d frames_selected=%d frames_sent=%d "
+            "frame_reduction=%s person_detection_sec=%.3f "
             "requests=%d input_tokens=%s output_tokens=%s total_tokens=%s "
             "estimated_cost=%s report_cached=%s report_provider=%s report_model=%s "
             "daily_report_processing_sec=%.3f artifacts=%s",
@@ -158,6 +174,11 @@ def _daily_command(argv: Sequence[str]) -> int:
             len(results.failures),
             triage.summary.evaluated_count,
             triage.summary.attention_count,
+            results.frames_extracted,
+            results.frames_selected,
+            results.frames_sent,
+            _ratio_text(results.frame_reduction_ratio),
+            results.detection_sec,
             run_usage.request_count,
             run_usage.input_tokens,
             run_usage.output_tokens,
@@ -175,6 +196,8 @@ def _daily_command(argv: Sequence[str]) -> int:
         degraded = report_fallback or triage.summary.failed
         return 2 if results.failures or results.unstable or degraded else 0
     finally:
+        if analyzer is not None:
+            analyzer.close()
         provider.close()
 
 
@@ -202,6 +225,7 @@ def _single_command(argv: Sequence[str]) -> int:
     event_directory.mkdir(parents=True, exist_ok=True)
 
     provider = create_provider(settings)
+    analyzer: EventAnalyzer | None = None
     try:
         analyzer = EventAnalyzer(settings, provider)
         with StateStore(
@@ -221,16 +245,21 @@ def _single_command(argv: Sequence[str]) -> int:
                 expected_snapshot=None,
             )
         LOGGER.info(
-            "single video complete event_id=%s cached=%s output=%s frames=%d requests=%d",
+            "single video complete event_id=%s cached=%s output=%s frames=%d "
+            "frames_extracted=%d frame_filter=%s requests=%d",
             event.event_id,
             cached,
             event_directory / f"event_{event_id}.json",
             event.processing.frames_analyzed,
+            event.processing.frame_filter.frames_extracted,
+            event.processing.frame_filter.status,
             0 if cached else event.processing.usage.request_count,
         )
         print(event_directory / f"event_{event_id}.json")
         return 0
     finally:
+        if analyzer is not None:
+            analyzer.close()
         provider.close()
 
 
@@ -302,6 +331,11 @@ def _process_day(
                 results.cached += 1
             else:
                 results.new_usage = results.new_usage.plus(event.processing.usage)
+                frame_filter = event.processing.frame_filter
+                results.frames_extracted += frame_filter.frames_extracted
+                results.frames_selected += frame_filter.frames_selected
+                results.frames_sent += frame_filter.frames_sent
+                results.detection_sec += frame_filter.detection_sec or 0.0
             LOGGER.info(
                 "event complete index=%d/%d event_id=%s file=%s duration_sec=%.3f "
                 "frames=%d chunks=%d cached=%s provider=%s model=%s requests=%d "
@@ -439,6 +473,7 @@ def _process_one(
             claim.record.id,
             event_json_path=stored_path,
             usage=event.processing.usage,
+            frame_filter=event.processing.frame_filter,
             recording_time=event.recording_start,
             event_id=event.event_id,
         )
@@ -579,6 +614,10 @@ def _cache_prompt_version(settings: AppSettings) -> str:
         "overlap": settings.genai.chunk_overlap_frames,
         "max_output_tokens": settings.genai.max_output_tokens,
         "timezone": settings.timezone,
+        # Which frames were sent is part of what produced the event, so a
+        # changed threshold, gap, or padding must not reuse an event analysed
+        # under the previous values.
+        "person_filter": settings.person_filter.fingerprint_payload(),
         # The scene description is part of the observation prompt, so a changed
         # household description must invalidate cached event JSON.
         "scene": settings.scene.prompt_payload(),
@@ -628,6 +667,10 @@ def _iso_date(value: str) -> date:
         return date.fromisoformat(value)
     except ValueError as exc:
         raise argparse.ArgumentTypeError("date must be YYYY-MM-DD") from exc
+
+
+def _ratio_text(value: float | None) -> str:
+    return "n/a" if value is None else f"{value:.3f}"
 
 
 def _brief_error(exc: BaseException) -> str:

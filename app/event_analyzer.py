@@ -26,6 +26,7 @@ from app.models import (
     TimeConfidence,
     VideoMetadata as EventVideoMetadata,
 )
+from app.person_filter import PersonFrameFilter
 from app.video import (
     ExtractedFrame,
     FileSnapshot,
@@ -47,11 +48,23 @@ EVENT_ANALYSIS_PIPELINE_VERSION = "event_pipeline_v1"
 
 
 class EventAnalyzer:
-    def __init__(self, settings: AppSettings, provider: GenAIProvider) -> None:
+    def __init__(
+        self,
+        settings: AppSettings,
+        provider: GenAIProvider,
+        frame_filter: PersonFrameFilter | None = None,
+    ) -> None:
         self.settings = settings
         self.provider = provider
+        # Built once per run: loading detector weights takes seconds, and a
+        # misconfigured filter should stop the run before the first API call
+        # rather than after the first video.
+        self.frame_filter = frame_filter or PersonFrameFilter(settings)
         self._event_prompt = _read_prompt(settings.prompts.event)
         self._synthesis_prompt = _read_prompt(settings.prompts.event_synthesis)
+
+    def close(self) -> None:
+        self.frame_filter.close()
 
     def analyze_file(
         self,
@@ -101,8 +114,13 @@ class EventAnalyzer:
                 metadata.duration_sec,
                 len(frames),
             )
+            # Local person detection runs between extraction and the provider
+            # so the pre-record and post-record margins Reolink adds to every
+            # clip are never paid for. The JPEGs still live in the same
+            # temporary directory and are removed with it either way.
+            filtered = self.frame_filter.select(frames)
             analysis, usage, chunk_count = self._observe(
-                frames=frames,
+                frames=filtered.frames,
                 metadata=metadata,
                 source_file=source_file or video_path.name,
                 recording_start=recording_start,
@@ -118,10 +136,11 @@ class EventAnalyzer:
             analysis_signature=analysis_signature,
             source_fingerprint=source_fingerprint,
             frame_interval_sec=self.settings.frames.interval_sec,
-            frames_analyzed=len(frames),
+            frames_analyzed=len(filtered.frames),
             chunk_count=chunk_count,
             processing_time_sec=time.perf_counter() - started,
             usage=usage,
+            frame_filter=filtered.metadata,
             completed_at=completed_at,
         )
         return Event(
