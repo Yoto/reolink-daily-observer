@@ -122,12 +122,16 @@ def run_triage(
         )
 
     triage_result = result.value
-    items = _canonicalize_items(triage_result.items, events)
-    attention = _select_attention(items, settings)
+    items, capped = _canonicalize_items(triage_result.items, events, settings)
+    grouped_items, folded = _group_occurrences(items, settings)
+    attention = _select_attention(grouped_items, settings)
     LOGGER.info(
-        "triage complete evaluated=%d attention=%d threshold=%d elapsed_sec=%.2f",
+        "triage complete evaluated=%d attention=%d grouped=%d routine_explained=%d "
+        "threshold=%d elapsed_sec=%.2f",
         len(items),
         len(attention),
+        folded,
+        capped,
         threshold,
         time.perf_counter() - started,
     )
@@ -142,6 +146,8 @@ def run_triage(
             prompt_version=settings.prompts.triage_version,
             evaluated_count=len(items),
             attention_count=len(attention),
+            grouped_count=folded,
+            routine_explained_count=capped,
             score_threshold=threshold,
             person_type_totals=_person_type_totals(items),
             usage=result.usage,
@@ -151,13 +157,19 @@ def run_triage(
 
 
 def _canonicalize_items(
-    items: Sequence[AttentionItem], events: Sequence[Event]
-) -> list[AttentionItem]:
-    """Bind each judgement to a real event and restore trusted local fields."""
+    items: Sequence[AttentionItem], events: Sequence[Event], settings: AppSettings
+) -> tuple[list[AttentionItem], int]:
+    """Bind each judgement to a real event and restore trusted local fields.
+
+    Returns the canonical items and the number whose score was capped because a
+    documented routine explained them.
+    """
 
     by_id = {event.event_id: event for event in events}
     canonical: list[AttentionItem] = []
     seen: set[str] = set()
+    capped = 0
+    cap = settings.triage.routine_explained_score_cap
     for item in items:
         source = by_id.get(item.event_id)
         if source is None:
@@ -167,14 +179,30 @@ def _canonicalize_items(
             continue
         seen.add(item.event_id)
         notable = item.notable.strip() if item.notable else None
+        routine = item.routine_explanation.strip() if item.routine_explanation else None
+        score = item.anomaly_score
+        # An event with an ordinary explanation and nothing flagged should not
+        # reach the attention threshold on the strength of unresolved detail.
+        if routine and not notable and score > cap:
+            LOGGER.debug(
+                "capping routine-explained event_id=%s score %d -> %d",
+                item.event_id,
+                score,
+                cap,
+            )
+            score = cap
+            capped += 1
         canonical.append(
             item.model_copy(
                 update={
                     "notable": notable or None,
+                    "routine_explanation": routine or None,
+                    "anomaly_score": score,
                     # Identity and timestamps come from the event record, never
                     # from the response, so a report cannot mislabel a file.
                     "recording_time": source.recording_start,
                     "source_file": source.source_file,
+                    "related_event_ids": [],
                 }
             )
         )
@@ -185,7 +213,54 @@ def _canonicalize_items(
             len(missing),
             ", ".join(sorted(missing)),
         )
-    return canonical
+    return canonical, capped
+
+
+def _group_occurrences(
+    items: Sequence[AttentionItem], settings: AppSettings
+) -> tuple[list[AttentionItem], int]:
+    """Collapse events sharing an occurrence into their most notable member.
+
+    One visit can span several clips. Reporting each clip separately inflates
+    the count without telling the resident anything new, so the highest-scoring
+    member represents the occurrence and the rest become related events.
+    """
+
+    if not settings.triage.group_related_events:
+        return list(items), 0
+
+    groups: dict[str, list[AttentionItem]] = defaultdict(list)
+    ungrouped: list[AttentionItem] = []
+    for item in items:
+        if item.occurrence_id:
+            groups[item.occurrence_id].append(item)
+        else:
+            ungrouped.append(item)
+
+    representatives: list[AttentionItem] = []
+    folded = 0
+    for members in groups.values():
+        if len(members) == 1:
+            representatives.append(members[0])
+            continue
+        ordered = sorted(
+            members,
+            key=lambda item: (
+                -item.anomaly_score,
+                item.notable is None,
+                item.recording_time.timestamp() if item.recording_time else 0.0,
+            ),
+        )
+        leader, rest = ordered[0], ordered[1:]
+        folded += len(rest)
+        representatives.append(
+            leader.model_copy(
+                update={
+                    "related_event_ids": sorted(item.event_id for item in rest),
+                }
+            )
+        )
+    return representatives + ungrouped, folded
 
 
 def _select_attention(

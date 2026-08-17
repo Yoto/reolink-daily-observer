@@ -42,11 +42,11 @@ genai:
 prompts:
   event: prompts/event_observation_v2.txt
   event_synthesis: prompts/event_synthesis_v1.txt
-  triage: prompts/triage_v1.txt
+  triage: prompts/triage_v2.txt
   daily_report: prompts/daily_report_v2.txt
   event_version: event_observation_v2
   event_synthesis_version: event_synthesis_v1
-  triage_version: triage_v1
+  triage_version: triage_v2
   daily_report_version: daily_report_v2
 
 # The scene description names a household and its habits, so it is kept out of
@@ -64,6 +64,10 @@ triage:
   attention_score_threshold: 7
   # A non-null "notable" is surfaced regardless of score.
   notable_always_attention: true
+  # An event explained by a documented routine cannot exceed this score.
+  routine_explained_score_cap: 4
+  # Report one visit split across several clips as a single item.
+  group_related_events: true
   # Prior daily reports supplied as a baseline for novelty judgement.
   history_days: 14
   max_attention_items: 20

@@ -154,11 +154,11 @@ class GenAISettings(SettingsModel):
 class PromptSettings(SettingsModel):
     event: Path = Path("prompts/event_observation_v2.txt")
     event_synthesis: Path = Path("prompts/event_synthesis_v1.txt")
-    triage: Path = Path("prompts/triage_v1.txt")
+    triage: Path = Path("prompts/triage_v2.txt")
     daily_report: Path = Path("prompts/daily_report_v2.txt")
     event_version: VersionIdentifier = "event_observation_v2"
     event_synthesis_version: VersionIdentifier = "event_synthesis_v1"
-    triage_version: VersionIdentifier = "triage_v1"
+    triage_version: VersionIdentifier = "triage_v2"
     daily_report_version: VersionIdentifier = "daily_report_v2"
 
 
@@ -214,6 +214,13 @@ class TriageSettings(SettingsModel):
     attention_score_threshold: int = Field(default=7, ge=0, le=10)
     # A non-null ``notable`` promotes an item regardless of its score.
     notable_always_attention: bool = True
+    # When a documented routine explains an event and nothing was flagged as
+    # notable, the score cannot exceed this. Ordinary household activity should
+    # not reach the attention threshold just because a detail went unresolved.
+    routine_explained_score_cap: int = Field(default=4, ge=0, le=10)
+    # Fold events belonging to one real-world occurrence into a single item, so
+    # one visit split across several clips is reported once.
+    group_related_events: bool = True
     # Prior daily reports supplied as a baseline for novelty judgement.
     history_days: int = Field(default=14, ge=0, le=90)
     max_attention_items: int = Field(default=20, ge=1)

@@ -377,7 +377,16 @@ def _triage_prompt_block(triage: TriageOutcome) -> str:
             "day_notes": list(triage.day_notes),
             "items": [
                 item.model_dump(
-                    mode="json", include={"event_id", "assessment", "person_type", "notable", "anomaly_score"}
+                    mode="json",
+                    include={
+                        "event_id",
+                        "assessment",
+                        "person_type",
+                        "routine_explanation",
+                        "occurrence_id",
+                        "notable",
+                        "anomaly_score",
+                    },
                 )
                 for item in triage.all_items
             ],
@@ -419,6 +428,8 @@ def _render_context(report: DailyReport) -> dict[str, object]:
         "failed": triage["failed"],
         "evaluated": triage["evaluated_count"],
         "attention": triage["attention_count"],
+        "grouped": triage["grouped_count"],
+        "routine_explained": triage["routine_explained_count"],
         "threshold": triage["score_threshold"],
         "person_type_totals": triage["person_type_totals"],
     }
