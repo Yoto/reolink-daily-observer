@@ -109,6 +109,78 @@ class FrameSettings(SettingsModel):
     ffmpeg_timeout_sec: float = Field(default=900.0, gt=0)
 
 
+class PersonFilterSettings(SettingsModel):
+    """Local person detection that decides which frames reach the provider.
+
+    Reolink always writes a pre-record and post-record margin around a trigger,
+    so the beginning and end of every clip contain a block of frames with
+    nobody in them. Dropping those locally is the cheapest available saving,
+    but a frame dropped here never reaches the VLM and its loss leaves no trace
+    in the report, so the defaults deliberately favour recall over saving.
+    """
+
+    # Off unless the configuration file asks for it. The stage needs weights
+    # baked into the image and an optional dependency that a bare checkout does
+    # not have, so an unconfigured deployment must keep behaving exactly as it
+    # did before. ``config/config.yaml`` turns it on for the real deployment.
+    enabled: bool = False
+    # Score, log, and account for the selection but still send every frame.
+    # Intended to run for a few days first so the reduction rate and the
+    # discarded frames can be inspected before any frame is actually lost.
+    dry_run: bool = True
+    backend: Literal["huggingface"] = "huggingface"
+    model: NonEmpty = "hustvl/yolos-tiny"
+    # Weights are baked into the image at build time. A daily batch must not
+    # depend on Hugging Face being reachable at 04:00, so nothing is fetched at
+    # run time; the directory below is produced by scripts/fetch_person_model.py.
+    model_dir: Path = Path("/opt/analyzer/models/person-detector")
+    # Recall-biased on purpose: a false positive costs one image, a false
+    # negative costs the only record of what happened.
+    score_threshold_day: float = Field(default=0.20, ge=0, le=1)
+    # IR footage is monochrome and off-distribution for a COCO-trained RGB
+    # detector, so night needs a lower bar to keep the same recall.
+    score_threshold_night: float = Field(default=0.10, ge=0, le=1)
+    # Mean chroma below this marks a clip as IR/monochrome. Measured from the
+    # frames themselves rather than from the clock: a sunset clip, a dark
+    # overcast morning, and a camera that switches to IR early all differ from
+    # what a fixed time boundary would predict.
+    night_saturation_threshold: float = Field(default=0.05, ge=0, le=1)
+    merge_gap_sec: float = Field(default=3.0, ge=0)
+    padding_sec: float = Field(default=2.0, ge=0)
+    keep_first_last_frame: bool = True
+    # Frames per forward pass. Larger batches use the CPU better but hold more
+    # decoded images in memory at once.
+    batch_size: int = Field(default=8, ge=1, le=64)
+    # 0 lets the inference runtime choose; set it to leave headroom on a box
+    # that is doing something else at the same time.
+    threads: int = Field(default=0, ge=0, le=256)
+
+    def fingerprint_payload(self) -> dict[str, Any]:
+        """Selection-affecting values, for the event cache key.
+
+        Everything that can change which frames a run sends belongs here.
+        Re-tuning a threshold and then reusing an event produced under the old
+        one would silently mix two different analyses in the same report.
+        ``dry_run`` is included because it decides whether the selection is
+        applied at all.
+        """
+
+        if not self.enabled:
+            return {"enabled": False}
+        return {
+            "enabled": True,
+            "dry_run": self.dry_run,
+            "backend": self.backend,
+            "model": self.model,
+            "score_threshold_day": self.score_threshold_day,
+            "score_threshold_night": self.score_threshold_night,
+            "night_saturation_threshold": self.night_saturation_threshold,
+            "merge_gap_sec": self.merge_gap_sec,
+            "padding_sec": self.padding_sec,
+            "keep_first_last_frame": self.keep_first_last_frame,
+        }
+
+
 class RetrySettings(SettingsModel):
     max_attempts: int = Field(default=4, ge=1)
 
@@ -268,6 +340,7 @@ class AppSettings(SettingsModel):
     schedule: ScheduleSettings = Field(default_factory=ScheduleSettings)
     input: InputSettings = Field(default_factory=InputSettings)
     frames: FrameSettings = Field(default_factory=FrameSettings)
+    person_filter: PersonFilterSettings = Field(default_factory=PersonFilterSettings)
     genai: GenAISettings = Field(default_factory=GenAISettings)
     prompts: PromptSettings = Field(default_factory=PromptSettings)
     # Household details are sensitive, so the scene description is normally
@@ -460,6 +533,7 @@ __all__ = [
     "GenAISettings",
     "InputSettings",
     "PathsSettings",
+    "PersonFilterSettings",
     "ProcessingSettings",
     "PromptSettings",
     "ReportSettings",

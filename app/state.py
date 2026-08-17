@@ -19,10 +19,25 @@ from typing import Any, Self
 
 from pydantic import Field, field_validator
 
-from app.models import APIUsage, NonEmptyText, SchemaModel
+from app.models import APIUsage, FrameFilterMetadata, NonEmptyText, SchemaModel
 
 
-_STATE_SCHEMA_VERSION = 1
+_STATE_SCHEMA_VERSION = 2
+# Version 1 databases predate the local person filter. The columns are added in
+# place rather than by rebuilding the table so an existing deployment keeps its
+# cache -- the filter changes which frames are sent, and that already
+# invalidates affected keys through the analysis signature.
+_FRAME_FILTER_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("frames_extracted", "INTEGER"),
+    ("frames_selected", "INTEGER"),
+    ("frames_sent", "INTEGER"),
+    ("filter_status", "TEXT"),
+    ("filter_lighting", "TEXT"),
+    ("filter_score_threshold", "REAL"),
+    ("filter_reduction_ratio", "REAL"),
+    ("filter_detection_sec", "REAL"),
+    ("frame_filter_json", "TEXT NOT NULL DEFAULT '{}'"),
+)
 
 
 class ProcessingStatus(str, Enum):
@@ -115,6 +130,7 @@ class ProcessingRecord(SchemaModel):
     schema_version: NonEmptyText
     event_json_path: str | None = None
     usage: APIUsage = Field(default_factory=APIUsage)
+    frame_filter: FrameFilterMetadata = Field(default_factory=FrameFilterMetadata)
     error_type: str | None = None
     error_message: str | None = None
     attempt_count: int = Field(ge=1)
@@ -209,7 +225,7 @@ class StateStore:
             current_version = int(
                 self._connection.execute("PRAGMA user_version").fetchone()[0]
             )
-            if current_version not in (0, _STATE_SCHEMA_VERSION):
+            if current_version > _STATE_SCHEMA_VERSION:
                 raise RuntimeError(
                     f"unsupported state database version {current_version}; "
                     f"expected {_STATE_SCHEMA_VERSION}"
@@ -245,6 +261,21 @@ class StateStore:
                     ),
                     cost_currency TEXT,
                     usage_json TEXT NOT NULL DEFAULT '{}',
+                    frames_extracted INTEGER CHECK (
+                        frames_extracted IS NULL OR frames_extracted >= 0
+                    ),
+                    frames_selected INTEGER CHECK (
+                        frames_selected IS NULL OR frames_selected >= 0
+                    ),
+                    frames_sent INTEGER CHECK (
+                        frames_sent IS NULL OR frames_sent >= 0
+                    ),
+                    filter_status TEXT,
+                    filter_lighting TEXT,
+                    filter_score_threshold REAL,
+                    filter_reduction_ratio REAL,
+                    filter_detection_sec REAL,
+                    frame_filter_json TEXT NOT NULL DEFAULT '{}',
                     error_type TEXT,
                     error_message TEXT,
                     attempt_count INTEGER NOT NULL DEFAULT 1 CHECK (attempt_count >= 1),
@@ -263,7 +294,23 @@ class StateStore:
                     ON processing_records(status, updated_at DESC);
                 """
             )
+            self._add_missing_columns()
             self._connection.execute(f"PRAGMA user_version = {_STATE_SCHEMA_VERSION}")
+
+    def _add_missing_columns(self) -> None:
+        """Bring a version 1 database up to the current column set."""
+
+        existing = {
+            row["name"]
+            for row in self._connection.execute(
+                "PRAGMA table_info(processing_records)"
+            ).fetchall()
+        }
+        for name, definition in _FRAME_FILTER_COLUMNS:
+            if name not in existing:
+                self._connection.execute(
+                    f"ALTER TABLE processing_records ADD COLUMN {name} {definition}"
+                )
 
     @staticmethod
     def _key_parameters(key: CacheKey) -> tuple[Any, ...]:
@@ -323,6 +370,7 @@ class StateStore:
             schema_version=row["schema_version"],
             event_json_path=row["event_json_path"],
             usage=APIUsage.model_validate(usage_payload),
+            frame_filter=StateStore._row_to_frame_filter(row),
             error_type=row["error_type"],
             error_message=row["error_message"],
             attempt_count=row["attempt_count"],
@@ -330,6 +378,22 @@ class StateStore:
             updated_at=_from_iso(row["updated_at"]),
             processed_at=_from_iso(row["processed_at"]),
         )
+
+    @staticmethod
+    def _row_to_frame_filter(row: sqlite3.Row) -> FrameFilterMetadata:
+        try:
+            payload = json.loads(row["frame_filter_json"] or "{}")
+        except (TypeError, json.JSONDecodeError):
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        try:
+            return FrameFilterMetadata.model_validate(payload)
+        except ValueError:
+            # The scalar columns exist for aggregation; the JSON is the record.
+            # An unreadable one must not make the whole run unable to read its
+            # own state, so fall back to the default "nothing was filtered".
+            return FrameFilterMetadata()
 
     def _fetch_key(self, key: CacheKey) -> ProcessingRecord | None:
         row = self._connection.execute(
@@ -445,7 +509,13 @@ class StateStore:
                             output_tokens = NULL, total_tokens = NULL,
                             request_count = 0, api_processing_sec = NULL,
                             estimated_cost = NULL, cost_currency = NULL,
-                            usage_json = '{}', error_type = NULL,
+                            usage_json = '{}', frames_extracted = NULL,
+                            frames_selected = NULL, frames_sent = NULL,
+                            filter_status = NULL, filter_lighting = NULL,
+                            filter_score_threshold = NULL,
+                            filter_reduction_ratio = NULL,
+                            filter_detection_sec = NULL,
+                            frame_filter_json = '{}', error_type = NULL,
                             error_message = NULL, processed_at = NULL,
                             attempt_count = attempt_count + 1, updated_at = ?
                         WHERE id = ?
@@ -467,12 +537,23 @@ class StateStore:
             return usage
         return APIUsage.model_validate(usage)
 
+    @staticmethod
+    def _coerce_frame_filter(
+        frame_filter: FrameFilterMetadata | dict[str, Any] | None,
+    ) -> FrameFilterMetadata:
+        if frame_filter is None:
+            return FrameFilterMetadata()
+        if isinstance(frame_filter, FrameFilterMetadata):
+            return frame_filter
+        return FrameFilterMetadata.model_validate(frame_filter)
+
     def mark_completed(
         self,
         record_id: int,
         *,
         event_json_path: str | Path,
         usage: APIUsage | dict[str, Any] | None = None,
+        frame_filter: FrameFilterMetadata | dict[str, Any] | None = None,
         recording_time: datetime | None = None,
         event_id: str | None = None,
         processed_at: datetime | None = None,
@@ -481,9 +562,18 @@ class StateStore:
         if not artifact_path:
             raise ValueError("event_json_path must not be empty")
         usage_model = self._coerce_usage(usage)
+        filter_model = self._coerce_frame_filter(frame_filter)
         finished = processed_at or _utc_now()
         usage_json = json.dumps(
             usage_model.model_dump(mode="json"),
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        # Same shape as usage: queryable scalars for "how much did the filter
+        # save last month", plus the full record as JSON so the score
+        # distribution is still there when a threshold has to be re-tuned.
+        frame_filter_json = json.dumps(
+            filter_model.model_dump(mode="json"),
             ensure_ascii=False,
             separators=(",", ":"),
         )
@@ -497,6 +587,10 @@ class StateStore:
                     input_tokens = ?, output_tokens = ?, total_tokens = ?,
                     request_count = ?, api_processing_sec = ?,
                     estimated_cost = ?, cost_currency = ?, usage_json = ?,
+                    frames_extracted = ?, frames_selected = ?, frames_sent = ?,
+                    filter_status = ?, filter_lighting = ?,
+                    filter_score_threshold = ?, filter_reduction_ratio = ?,
+                    filter_detection_sec = ?, frame_filter_json = ?,
                     error_type = NULL, error_message = NULL,
                     processed_at = ?, updated_at = ?
                 WHERE id = ?
@@ -513,6 +607,15 @@ class StateStore:
                     usage_model.estimated_cost,
                     usage_model.cost_currency,
                     usage_json,
+                    filter_model.frames_extracted,
+                    filter_model.frames_selected,
+                    filter_model.frames_sent,
+                    str(filter_model.status),
+                    filter_model.lighting,
+                    filter_model.score_threshold,
+                    filter_model.reduction_ratio,
+                    filter_model.detection_sec,
+                    frame_filter_json,
                     _to_iso(finished),
                     _to_iso(finished),
                     record_id,
