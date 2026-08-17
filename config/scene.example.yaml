@@ -1,0 +1,58 @@
+# Scene description: what this camera normally sees.
+#
+# Copy this file to config/scene.yaml and replace every value with your own.
+# config/scene.yaml is git-ignored because the contents describe a household,
+# its vehicles, and its daily routine.
+#
+#   Copy-Item config/scene.example.yaml config/scene.yaml
+#
+# Every field is optional. Anything left blank is omitted from prompts, so a
+# partially filled file is fine — start with location and camera_view and add
+# more once you see how the reports change.
+#
+# Two prompts consume this:
+#   - the observation prompt, to name places concretely instead of "a path"
+#   - the triage prompt, to tell an ordinary household routine apart from
+#     something that has no ordinary explanation
+#
+# Write behaviour, not appearance. Descriptions of what people look like are
+# not useful here and are explicitly excluded from the judgement criteria.
+
+# Where the camera is and what kind of property this is.
+location: |
+  郊外の戸建て住宅。前面道路に面した敷地で、道路は生活道路として通行がある。
+
+# What is inside the frame, including where the camera pans.
+camera_view: |
+  屋根付き駐車スペースを中心に、玄関前、敷地出入口、前面道路の一部を映す。
+  PTZで巡回するため、庭、物置、洗濯物干し場が映る時間帯もある。
+
+# Who lives here and how they normally move around. Roles, not identities.
+household: |
+  成人2名と学齢の子ども1名。平日の朝は自転車で外出し、夕方に戻る。
+  日中は在宅していることが多い。
+
+# Things that happen most days and should not be treated as findings.
+routine_patterns:
+  - 平日朝7時台から8時台に、自転車で敷地出入口へ向かう
+  - 玄関はスマートロックで、スマートフォンを近づけて解錠する
+  - 日中に洗濯物干し場と屋内を往復する
+  - 買い物袋やかごを持って車両と玄関の間を移動する
+  - 週に数回、宅配便が玄関前に到着する
+
+# Vehicles that belong here. Behaviour still matters more than the description.
+known_vehicles:
+  - 白色の乗用車（駐車スペースの左側に駐車）
+  - 淡色の軽自動車（駐車スペースの右側に駐車）
+
+# Visitors that are expected and need no attention.
+expected_visitors:
+  - 宅配便および郵便の配達
+  - 週1回の廃棄物収集
+  - 近隣住民との立ち話
+
+# Anything else worth knowing: blind spots, neighbours' property in frame,
+# scheduled work, seasonal changes.
+notes: |
+  画面奥の道路は通行人と通過車両が日常的にあり、敷地内ではない。
+  駐車スペース奥の物置は住人が日常的に使用する。

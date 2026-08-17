@@ -8,7 +8,7 @@ from typing import Sequence
 from pydantic import BaseModel
 
 from app.genai.base import FrameInput, GenAIProvider, SchemaT, StructuredResult
-from app.models import APIUsage, EventAnalysis, Observation
+from app.models import APIUsage, EventAnalysis, Observation, TriageResult
 
 
 class MockProvider(GenAIProvider):
@@ -48,6 +48,16 @@ class MockProvider(GenAIProvider):
                     "オフライン動作確認用の出力。実映像の評価にはOpenAI providerを使用する。"
                 ),
                 uncertainties=["mock providerのため映像内容は観察していない"],
+            )
+        elif issubclass(response_model, TriageResult):
+            # Triage is a judgement stage; a mock must not invent judgements.
+            # An empty result makes the report render its "nothing evaluated"
+            # path instead of implying every event was checked and cleared.
+            payload = TriageResult(
+                items=[],
+                day_notes=[
+                    "オフライン動作確認モードのため、イベントの判定は行っていない。"
+                ],
             )
         else:
             fields = response_model.model_fields

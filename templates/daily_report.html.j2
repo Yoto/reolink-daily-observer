@@ -15,6 +15,14 @@
     h3 { margin-bottom:.3rem; }
     ul { padding-left:1.4rem; }
     .event,.period { padding:1rem 1.2rem; margin:1rem 0; border-left:4px solid #8db5c5; background:#f8fafb; border-radius:0 8px 8px 0; }
+    .banner { display:flex; align-items:baseline; gap:.6rem; padding:.9rem 1.1rem; margin:0 0 1.5rem; border-radius:10px; font-size:1.05rem; }
+    .banner strong { font-size:1.35rem; }
+    .banner.clear { background:#eef5f0; border:1px solid #bcd8c6; color:#245c3a; }
+    .banner.flagged { background:#fdf1e7; border:1px solid #e8c39b; color:#8a4b12; }
+    .banner.failed { background:#f6f0f2; border:1px solid #d8bcc4; color:#7a2f43; }
+    .attention { padding:1rem 1.2rem; margin:1rem 0; border-left:4px solid #d98b45; background:#fdf7f2; border-radius:0 8px 8px 0; }
+    .attention .notable { font-weight:700; }
+    .score { display:inline-block; padding:.1rem .55rem; border-radius:999px; background:#e6ac74; color:#3a1f08; font-size:.85rem; margin-left:.4rem; }
     .meta { color:var(--muted); font-size:.94rem; overflow-wrap:anywhere; }
     .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:.75rem; }
     .stat { padding:.8rem; border:1px solid var(--line); border-radius:8px; text-align:center; }
@@ -29,7 +37,17 @@
   <h1>防犯カメラ日報</h1>
   <p class="date">{{ report.date_ja }}</p>
 
+  {% if report.triage.failed %}<p class="banner failed"><strong>判定失敗</strong> 要確認の抽出ができませんでした。以下は判定なしの記録です。</p>
+  {% elif report.triage.enabled and report.triage.evaluated %}<p class="banner {% if report.triage.attention %}flagged{% else %}clear{% endif %}"><strong>要確認 {{ report.triage.attention }}件</strong> / 判定済み {{ report.triage.evaluated }}件</p>
+  {% elif report.triage.enabled %}<p class="banner failed"><strong>判定なし</strong> 要確認の判定は行われませんでした。</p>{% endif %}
+
   <section><h2>本日の概要</h2><p>{{ report.overview }}</p></section>
+
+  {% if report.attention_items %}<section><h2>要確認</h2>
+  {% for item in report.attention_items %}<article class="attention"><h3>{% if item.recording_time %}{{ item.recording_time_display }}{% else %}録画時刻不明{% endif %}<span class="score">異常度 {{ item.anomaly_score }}/10</span><span class="score">{{ item.person_type_label }}</span></h3>{% if item.notable %}<p class="notable">{{ item.notable }}</p>{% endif %}<p>{{ item.assessment }}</p><p class="meta">元動画: {{ item.source_file }}<br>イベントID: {{ item.event_id }}</p></article>{% endfor %}
+  </section>{% elif report.triage.enabled and report.triage.evaluated and not report.triage.failed %}<section><h2>要確認</h2><p>該当なし。判定した{{ report.triage.evaluated }}件はいずれも平常の範囲でした。</p></section>{% endif %}
+
+  {% if report.day_notes %}<section><h2>その日全体の所見</h2><ul>{% for note in report.day_notes %}<li>{{ note }}</li>{% endfor %}</ul></section>{% endif %}
 
   {% if report.recurring_patterns %}<section><h2>全体に見られた様子</h2><ul>{% for item in report.recurring_patterns %}<li>{{ item }}</li>{% endfor %}</ul></section>{% endif %}
 
@@ -47,7 +65,9 @@
     <div class="stat"><strong>{{ report.processing.cached }}</strong>キャッシュ再利用</div>
     <div class="stat"><strong>{{ report.processing.unstable }}</strong>転送中保留</div>
     <div class="stat"><strong>{{ report.processing.failed }}</strong>失敗</div>
+    <div class="stat"><strong>{{ report.triage.evaluated }}</strong>triage評価</div>
   </div>
+  {% if report.triage.person_type_totals %}<p class="meta">人物判定内訳: {% for key, count in report.triage.person_type_totals.items() %}{{ key }}={{ count }}{% if not loop.last %} / {% endif %}{% endfor %}（抽出閾値 {{ report.triage.threshold }}）</p>{% endif %}
   {% if report.failed_events %}<h3>解析できなかった動画</h3><table><thead><tr><th>録画時刻</th><th>元動画</th><th>エラー</th></tr></thead><tbody>{% for f in report.failed_events %}<tr><td>{% if f.recording_time %}{{ f.recording_time_display }}{% else %}不明{% endif %}</td><td>{{ f.source_file }}</td><td>{{ f.error }}</td></tr>{% endfor %}</tbody></table>{% endif %}
   </section>
 </main></body></html>

@@ -31,10 +31,17 @@ from app.models import (
     SchemaModel,
     TimePeriodSummary,
 )
+from app.triage import TriageOutcome
 
 
 LOGGER = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_PERSON_TYPE_LABELS = {
+    "resident": "住人と考えられる",
+    "visitor": "来訪者と考えられる",
+    "unknown": "判別できない",
+    "not_applicable": "人物なし",
+}
 
 
 class DailyNarrative(SchemaModel):
@@ -61,12 +68,14 @@ def generate_daily_report(
     stats: DailyRunStats,
     settings: AppSettings,
     provider: GenAIProvider,
+    triage: TriageOutcome | None = None,
     cache_path: Path | None = None,
     force: bool = False,
 ) -> DailyReport:
     """Send only canonical event JSON to the provider, never images or MP4s."""
 
     started = time.perf_counter()
+    triage = triage or TriageOutcome()
     usage = APIUsage()
     report_provider = provider.name
     report_model = provider.model
@@ -77,6 +86,7 @@ def generate_daily_report(
         settings=settings,
         provider=provider,
         prompt_template=prompt_template,
+        triage=triage,
     )
     cached_processing: ReportProcessingMetadata | None = None
 
@@ -110,6 +120,8 @@ def generate_daily_report(
                 date=target_date.isoformat(),
                 timezone=settings.timezone,
                 success_count=len(events),
+                attention_count=len(triage.attention_items),
+                triage_json=_triage_prompt_block(triage),
                 events_json=json.dumps(
                     [event.model_dump(mode="json") for event in events],
                     ensure_ascii=False,
@@ -154,12 +166,15 @@ def generate_daily_report(
         title="防犯カメラ日報",
         event_count=len(events),
         overview=narrative.overview,
+        attention_items=list(triage.attention_items),
+        day_notes=list(triage.day_notes),
         time_periods=narrative.time_periods,
         recurring_patterns=narrative.recurring_patterns,
         entity_totals=_entity_totals(events),
         representative_events=narrative.representative_events,
         source_event_ids=source_ids,
         processing_summary=processing_summary,
+        triage_summary=triage.summary,
         processing=(
             cached_processing
             if cached_processing is not None
@@ -213,6 +228,7 @@ def _report_input_signature(
     settings: AppSettings,
     provider: GenAIProvider,
     prompt_template: str,
+    triage: TriageOutcome,
 ) -> str:
     value = {
         "date": target_date.isoformat(),
@@ -225,6 +241,13 @@ def _report_input_signature(
         "max_output_tokens": settings.genai.max_output_tokens,
         "language": settings.report.language,
         "events": [event.model_dump(mode="json") for event in events],
+        "triage": {
+            "summary": triage.summary.model_dump(mode="json", exclude={"usage"}),
+            "items": [
+                item.model_dump(mode="json") for item in triage.attention_items
+            ],
+            "day_notes": list(triage.day_notes),
+        },
     }
     return hashlib.sha256(
         json.dumps(
@@ -338,6 +361,32 @@ def _fallback_narrative(events: Sequence[Event]) -> DailyNarrative:
     )
 
 
+def _triage_prompt_block(triage: TriageOutcome) -> str:
+    """Give the narrative model every judgement, not only the flagged ones."""
+
+    if not triage.all_items:
+        if triage.summary.failed:
+            return "（triage処理が失敗したため判定結果はありません。）"
+        return "（triage処理は実行されませんでした。）"
+    return json.dumps(
+        {
+            "score_threshold": triage.summary.score_threshold,
+            "attention_event_ids": [
+                item.event_id for item in triage.attention_items
+            ],
+            "day_notes": list(triage.day_notes),
+            "items": [
+                item.model_dump(
+                    mode="json", include={"event_id", "assessment", "person_type", "notable", "anomaly_score"}
+                )
+                for item in triage.all_items
+            ],
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
 def _entity_totals(events: Sequence[Event]) -> dict[str, int]:
     totals: defaultdict[str, int] = defaultdict(int)
     for event in events:
@@ -356,6 +405,23 @@ def _render_context(report: DailyReport) -> dict[str, object]:
         item["recording_time_display"] = (
             timestamp.strftime("%H:%M") if timestamp is not None else None
         )
+    for item in payload["attention_items"]:
+        timestamp = item["recording_time"]
+        item["recording_time_display"] = (
+            timestamp.strftime("%H:%M") if timestamp is not None else None
+        )
+        item["person_type_label"] = _PERSON_TYPE_LABELS.get(
+            item["person_type"], item["person_type"]
+        )
+    triage = payload["triage_summary"]
+    payload["triage"] = {
+        "enabled": triage["enabled"],
+        "failed": triage["failed"],
+        "evaluated": triage["evaluated_count"],
+        "attention": triage["attention_count"],
+        "threshold": triage["score_threshold"],
+        "person_type_totals": triage["person_type_totals"],
+    }
     for failure in payload["processing_summary"]["failures"]:
         timestamp = failure["recording_time"]
         failure["recording_time_display"] = (

@@ -105,6 +105,7 @@ class EventAnalyzer:
                 frames=frames,
                 metadata=metadata,
                 source_file=source_file or video_path.name,
+                recording_start=recording_start,
             )
 
         analysis = _normalize_timestamps(analysis, metadata.duration_sec)
@@ -151,6 +152,7 @@ class EventAnalyzer:
         frames: Sequence[ExtractedFrame],
         metadata: VideoMetadata,
         source_file: str,
+        recording_start: datetime | None = None,
     ) -> tuple[EventAnalysis, APIUsage, int]:
         chunks = chunk_frames(
             frames,
@@ -164,6 +166,9 @@ class EventAnalyzer:
             context = {
                 "source_file": source_file,
                 "duration_sec": metadata.duration_sec,
+                "recording_start_local": (
+                    recording_start.isoformat() if recording_start else None
+                ),
                 "video_metadata": {
                     "width": metadata.width,
                     "height": metadata.height,
@@ -177,6 +182,9 @@ class EventAnalyzer:
                     "end_sec": chunk[-1].timestamp_sec,
                 },
             }
+            scene = self.settings.scene.prompt_payload()
+            if scene:
+                context["scene"] = scene
             prompt = self._event_prompt.format(
                 context=json.dumps(context, ensure_ascii=False, indent=2)
             )
@@ -206,6 +214,9 @@ class EventAnalyzer:
         synthesis_context = {
             "source_file": source_file,
             "duration_sec": metadata.duration_sec,
+            "recording_start_local": (
+                recording_start.isoformat() if recording_start else None
+            ),
             "chunk_count": len(chunks),
         }
         synthesis_prompt = self._synthesis_prompt.format(

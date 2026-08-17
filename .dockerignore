@@ -24,3 +24,9 @@ tests
 .e2e-*
 .review-*
 .run-windows.*
+
+# The scene description names a household; never bake it into an image
+config/scene.yaml
+config/scene.local.yaml
+config/scene.*.yaml
+!config/scene.example.yaml

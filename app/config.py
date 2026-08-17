@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from collections.abc import Mapping
@@ -32,6 +33,9 @@ VersionIdentifier = Annotated[
 _ENV_PATTERN = re.compile(
     r"\$\{(?P<name>[A-Za-z_][A-Za-z0-9_]*)(?::-(?P<default>[^}]*))?\}"
 )
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 class SettingsError(ValueError):
@@ -148,12 +152,71 @@ class GenAISettings(SettingsModel):
 
 
 class PromptSettings(SettingsModel):
-    event: Path = Path("prompts/event_observation_v1.txt")
+    event: Path = Path("prompts/event_observation_v2.txt")
     event_synthesis: Path = Path("prompts/event_synthesis_v1.txt")
-    daily_report: Path = Path("prompts/daily_report_v1.txt")
-    event_version: VersionIdentifier = "event_observation_v1"
+    triage: Path = Path("prompts/triage_v1.txt")
+    daily_report: Path = Path("prompts/daily_report_v2.txt")
+    event_version: VersionIdentifier = "event_observation_v2"
     event_synthesis_version: VersionIdentifier = "event_synthesis_v1"
-    daily_report_version: VersionIdentifier = "daily_report_v1"
+    triage_version: VersionIdentifier = "triage_v1"
+    daily_report_version: VersionIdentifier = "daily_report_v2"
+
+
+class SceneSettings(SettingsModel):
+    """Free-text description of what this camera normally sees.
+
+    Every field is optional. Empty fields are omitted from prompts entirely so
+    an unconfigured deployment behaves exactly like the previous version.
+    The values describe a private household, so the real file is expected to
+    live outside version control (see ``AppSettings.scene_file``).
+    """
+
+    location: str = ""
+    camera_view: str = ""
+    household: str = ""
+    routine_patterns: tuple[NonEmpty, ...] = ()
+    known_vehicles: tuple[NonEmpty, ...] = ()
+    expected_visitors: tuple[NonEmpty, ...] = ()
+    notes: str = ""
+
+    @property
+    def is_configured(self) -> bool:
+        return bool(
+            self.location
+            or self.camera_view
+            or self.household
+            or self.routine_patterns
+            or self.known_vehicles
+            or self.expected_visitors
+            or self.notes
+        )
+
+    def prompt_payload(self) -> dict[str, Any]:
+        """Return only the populated fields, for embedding in a prompt."""
+
+        payload: dict[str, Any] = {}
+        for key in ("location", "camera_view", "household", "notes"):
+            value: str = getattr(self, key)
+            if value:
+                payload[key] = value
+        for key in ("routine_patterns", "known_vehicles", "expected_visitors"):
+            values: tuple[str, ...] = getattr(self, key)
+            if values:
+                payload[key] = list(values)
+        return payload
+
+
+class TriageSettings(SettingsModel):
+    """Text-only judgement pass that runs between events and the report."""
+
+    enabled: bool = True
+    # Items at or above this score are surfaced as "requires a look".
+    attention_score_threshold: int = Field(default=7, ge=0, le=10)
+    # A non-null ``notable`` promotes an item regardless of its score.
+    notable_always_attention: bool = True
+    # Prior daily reports supplied as a baseline for novelty judgement.
+    history_days: int = Field(default=14, ge=0, le=90)
+    max_attention_items: int = Field(default=20, ge=1)
 
 
 class ReportSettings(SettingsModel):
@@ -198,6 +261,11 @@ class AppSettings(SettingsModel):
     frames: FrameSettings = Field(default_factory=FrameSettings)
     genai: GenAISettings = Field(default_factory=GenAISettings)
     prompts: PromptSettings = Field(default_factory=PromptSettings)
+    # Household details are sensitive, so the scene description is normally
+    # kept in a separate, git-ignored file referenced by ``scene_file``.
+    scene_file: Path | None = None
+    scene: SceneSettings = Field(default_factory=SceneSettings)
+    triage: TriageSettings = Field(default_factory=TriageSettings)
     report: ReportSettings = Field(default_factory=ReportSettings)
     processing: ProcessingSettings = Field(default_factory=ProcessingSettings)
 
@@ -307,7 +375,67 @@ def load_settings(
         data = _substitute_env(raw, environment)
 
     _apply_env_overrides(data, environment)
+    _merge_scene_file(data, environment, config_path)
     return AppSettings.model_validate(data)
+
+
+def _merge_scene_file(
+    data: dict[str, Any],
+    environ: Mapping[str, str],
+    config_path: str | os.PathLike[str] | None,
+) -> None:
+    """Merge an external scene YAML under the ``scene`` key.
+
+    The scene description names a household and its habits, so it is kept in a
+    separate file that never enters version control or a container image. An
+    inline ``scene`` block still wins, field by field, so a deployment can
+    override a single value without copying the whole file.
+    """
+
+    reference = data.get("scene_file")
+    if reference is None:
+        return
+    if not isinstance(reference, (str, os.PathLike)):
+        raise SettingsError("scene_file must be a path")
+    source = Path(reference)
+    if not source.is_absolute() and config_path is not None:
+        # Resolve relative to the configuration file so a bind-mounted config
+        # directory keeps working without absolute container paths.
+        candidate = Path(config_path).parent / source
+        if candidate.exists():
+            source = candidate
+    if not source.exists():
+        # The scene file is git-ignored, so a fresh checkout will not have one.
+        # Failing here would block the whole run over an optional quality input,
+        # but staying silent would hide why judgement quality is poor.
+        LOGGER.warning(
+            "scene file %s not found; prompts will omit the scene description "
+            "and resident/visitor judgement will be markedly less reliable",
+            source,
+        )
+        return
+    try:
+        raw = yaml.safe_load(source.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise SettingsError(f"cannot read scene file {source}: {exc}") from exc
+    except yaml.YAMLError as exc:
+        raise SettingsError(f"invalid YAML in scene file {source}: {exc}") from exc
+    if raw is None:
+        raw = {}
+    if not isinstance(raw, dict):
+        raise SettingsError("the scene file root must be a mapping")
+    # A scene file may either be a bare mapping of scene fields or wrap them in
+    # a top-level ``scene`` key; accept both so the example file reads naturally.
+    if set(raw) == {"scene"}:
+        nested = raw["scene"]
+        if not isinstance(nested, dict):
+            raise SettingsError("the scene file 'scene' key must be a mapping")
+        raw = nested
+    resolved = _substitute_env(raw, environ)
+    inline = data.get("scene") or {}
+    if not isinstance(inline, dict):
+        raise SettingsError("the inline scene block must be a mapping")
+    data["scene"] = {**resolved, **inline}
 
 
 # Conventional aliases for integration code and external users.
@@ -328,8 +456,10 @@ __all__ = [
     "ReportSettings",
     "RetrySettings",
     "ScheduleSettings",
+    "SceneSettings",
     "Settings",
     "SettingsError",
+    "TriageSettings",
     "load_config",
     "load_settings",
 ]
