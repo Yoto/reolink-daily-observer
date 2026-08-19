@@ -10,6 +10,7 @@ services:
       CONFIG_PATH: /config/config.yaml
       GENAI_PROVIDER: ${GENAI_PROVIDER:-openai}
       GENAI_MODEL: ${GENAI_MODEL:-gpt-5.6-luna}
+      GENAI_BATCH_ENABLED: ${GENAI_BATCH_ENABLED:-true}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
@@ -41,6 +42,10 @@ services:
         target: /opt/analyzer/templates
         read_only: true
     tmpfs:
-      - /tmp:size=2g,mode=1777
+      # Extracted JPEGs live here. A batched day holds the frames of every
+      # unprocessed clip at once, plus the base64 JSONL built from them, so
+      # this needs room for a whole busy day rather than one clip. It is
+      # RAM-backed: raise it only as far as the host can actually give.
+      - /tmp:size=${ANALYZER_TMPFS_SIZE:-4g},mode=1777
     network_mode: bridge
     restart: "no"

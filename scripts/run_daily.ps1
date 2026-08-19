@@ -3,6 +3,7 @@ param(
     [string]$ProjectPath = (Split-Path -Parent $PSScriptRoot),
     [string]$Date,
     [switch]$Force,
+    [switch]$Sync,
     [string]$LogPath
 )
 
@@ -31,6 +32,8 @@ try {
     )
     if ($Date) { $arguments += @('--date', $Date) }
     if ($Force) { $arguments += '--force' }
+    # Skip the batch queue when the report is needed today rather than cheaply.
+    if ($Sync) { $arguments += '--sync' }
 
     # In Windows PowerShell 5.1 native stderr is not a PowerShell exception.
     $previousPreference = $ErrorActionPreference

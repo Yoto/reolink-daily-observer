@@ -18,6 +18,7 @@ from app.daily_report import (
 )
 from app.event_analyzer import EventAnalyzer, chunk_frames
 from app.genai.base import (
+    BatchOutcome,
     FrameInput,
     GenAIProvider,
     GenAIResponseError,
@@ -35,7 +36,7 @@ from app.models import (
     VideoMetadata,
 )
 from app.run_daily import main
-from app.run_daily import _process_day
+from app.run_daily import _process_day, _process_day_batched
 from app.genai.mock import MockProvider
 from app.state import StateStore
 from app.video import ExtractedFrame, VideoMetadata as ProbedVideoMetadata
@@ -60,7 +61,7 @@ def test_chunk_frames_honors_bytes_count_and_overlap(tmp_path: Path) -> None:
 
 
 def test_event_chunk_failure_preserves_prior_and_failed_response_usage(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     class FailingChunkProvider(GenAIProvider):
         name = "failing"
@@ -98,25 +99,33 @@ def test_event_chunk_failure_preserves_prior_and_failed_response_usage(
             },
         }
     )
-    frames = []
-    for index in range(2):
-        path = tmp_path / f"frame_{index:06d}.jpg"
-        path.write_bytes(b"jpeg")
-        frames.append(ExtractedFrame(path=path, timestamp_sec=float(index), index=index))
-
-    analyzer = EventAnalyzer(settings, FailingChunkProvider())
-    with pytest.raises(GenAIResponseError) as captured:
-        analyzer._observe(  # noqa: SLF001 - verifies failure accounting contract
-            frames=frames,
-            metadata=ProbedVideoMetadata(
-                duration_sec=2, width=1280, height=720, fps=25, codec="h264"
-            ),
-            source_file="sample.mp4",
+    def fake_probe(path: Path, **kwargs) -> ProbedVideoMetadata:
+        return ProbedVideoMetadata(
+            duration_sec=2, width=1280, height=720, fps=25, codec="h264"
         )
+
+    def fake_extract(video_path: Path, output_dir: Path, **kwargs):
+        values = []
+        for index in range(3):
+            frame = Path(output_dir) / f"frame_{index:06d}.jpg"
+            frame.write_bytes(b"jpeg")
+            values.append(ExtractedFrame(frame, float(index), index))
+        return values
+
+    monkeypatch.setattr("app.event_analyzer.probe_video", fake_probe)
+    monkeypatch.setattr("app.event_analyzer.extract_frames", fake_extract)
+
+    provider = FailingChunkProvider()
+    analyzer = EventAnalyzer(settings, provider)
+    with pytest.raises(GenAIResponseError) as captured:
+        analyzer.analyze_file(tmp_path / "sample.mp4", event_id="20260816-abcdef123456")
 
     assert captured.value.usage.input_tokens == 17
     assert captured.value.usage.output_tokens == 7
     assert captured.value.usage.request_count == 3
+    # The second chunk failed, so the third was never worth paying for.
+    assert provider.calls == 2
+    assert not list((tmp_path / "temp").iterdir())
 
 
 class SpyDailyProvider(GenAIProvider):
@@ -393,3 +402,285 @@ def test_one_video_failure_does_not_stop_remaining_files(tmp_path: Path) -> None
     assert failed_records[0].usage.request_count == 2
     assert failed_records[0].usage.output_tokens == 1
     assert len(list(events_dir.glob("*.json"))) == 1
+
+
+class BatchMockProvider(MockProvider):
+    """A mock that also answers in bulk, so the deferred day path is testable."""
+
+    name = "batch-mock"
+    supports_batch = True
+
+    def __init__(self, failing_positions: frozenset[int] = frozenset()) -> None:
+        super().__init__("batch-mock-v1")
+        self.batches: list[list[str]] = []
+        self.failing_positions = failing_positions
+
+    def generate_structured_batch(self, requests):
+        self.batches.append([request.custom_id for request in requests])
+        outcomes = super().generate_structured_batch(requests)
+        for position, request in enumerate(requests):
+            if position in self.failing_positions:
+                outcomes[request.custom_id] = BatchOutcome(
+                    custom_id=request.custom_id,
+                    usage=APIUsage(input_tokens=5, output_tokens=1, request_count=1),
+                    error="synthetic batch rejection",
+                )
+        return outcomes
+
+
+def _batch_day_settings(tmp_path: Path, input_root: Path) -> AppSettings:
+    return AppSettings.model_validate(
+        {
+            "paths": {
+                "input": input_root,
+                "output": tmp_path / "output",
+                "state": tmp_path / "state",
+                "temp": tmp_path / "temp",
+            },
+            "input": {"stable_seconds": 0, "stability_recheck_sec": 0},
+            "genai": {"provider": "mock", "model": "batch-mock-v1"},
+        }
+    )
+
+
+def _fake_frames(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_probe(path: Path, **kwargs) -> ProbedVideoMetadata:
+        return ProbedVideoMetadata(
+            duration_sec=2, width=3840, height=2160, fps=25, codec="h264"
+        )
+
+    def fake_extract(video_path: Path, output_dir: Path, **kwargs):
+        values = []
+        for index in range(2):
+            frame = Path(output_dir) / f"frame_{index:06d}.jpg"
+            frame.write_bytes(b"jpeg")
+            values.append(ExtractedFrame(frame, float(index), index))
+        return values
+
+    monkeypatch.setattr("app.event_analyzer.probe_video", fake_probe)
+    monkeypatch.setattr("app.event_analyzer.extract_frames", fake_extract)
+
+
+def test_batched_day_submits_every_clip_in_one_batch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    input_root = tmp_path / "input"
+    input_root.mkdir()
+    videos = []
+    for stamp in ("20260816060000", "20260816143210"):
+        video = input_root / f"camera_00_{stamp}.mp4"
+        video.write_bytes(b"fake mp4")
+        videos.append(video)
+    _fake_frames(monkeypatch)
+
+    settings = _batch_day_settings(tmp_path, input_root)
+    settings.paths.output.mkdir(parents=True)
+    events_dir = settings.paths.output / "2026-08-16" / "events"
+    events_dir.mkdir(parents=True)
+    provider = BatchMockProvider()
+
+    with StateStore(
+        settings.paths.state_database, output_root=settings.paths.output
+    ) as state:
+        result = _process_day_batched(
+            videos=videos,
+            target_date=date(2026, 8, 16),
+            event_directory=events_dir,
+            settings=settings,
+            provider=provider,
+            analyzer=EventAnalyzer(settings, provider),
+            state=state,
+            force=False,
+        )
+
+    # One clip per request here, and both clips wait in the same batch.
+    assert len(provider.batches) == 1
+    assert len(provider.batches[0]) == 2
+    assert len(provider.batches[0]) == len(set(provider.batches[0]))
+    assert len(result.events) == 2
+    assert result.failures == []
+    assert len(list(events_dir.glob("*.json"))) == 2
+    assert result.new_usage.request_count == 2
+    # Frames are held until the batch is serialized, then released.
+    assert not list(settings.paths.temp.iterdir())
+
+
+def test_batched_day_reuses_cached_events_without_resubmitting_them(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    input_root = tmp_path / "input"
+    input_root.mkdir()
+    video = input_root / "camera_00_20260816060000.mp4"
+    video.write_bytes(b"fake mp4")
+    _fake_frames(monkeypatch)
+
+    settings = _batch_day_settings(tmp_path, input_root)
+    settings.paths.output.mkdir(parents=True)
+    events_dir = settings.paths.output / "2026-08-16" / "events"
+    events_dir.mkdir(parents=True)
+    provider = BatchMockProvider()
+
+    def run() -> object:
+        with StateStore(
+            settings.paths.state_database, output_root=settings.paths.output
+        ) as state:
+            return _process_day_batched(
+                videos=[video],
+                target_date=date(2026, 8, 16),
+                event_directory=events_dir,
+                settings=settings,
+                provider=provider,
+                analyzer=EventAnalyzer(settings, provider),
+                state=state,
+                force=False,
+            )
+
+    first = run()
+    second = run()
+
+    assert first.cached == 0
+    assert second.cached == 1
+    assert len(second.events) == 1
+    # A cached clip must never reach the queue, so the second run sends nothing.
+    assert len(provider.batches) == 1
+
+
+def test_one_batch_rejection_does_not_cost_the_day_its_other_events(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    input_root = tmp_path / "input"
+    input_root.mkdir()
+    bad = input_root / "bad_20260816060000.mp4"
+    good = input_root / "good_20260816070000.mp4"
+    bad.write_bytes(b"broken")
+    good.write_bytes(b"video")
+    _fake_frames(monkeypatch)
+
+    settings = _batch_day_settings(tmp_path, input_root)
+    settings.paths.output.mkdir(parents=True)
+    events_dir = settings.paths.output / "2026-08-16" / "events"
+    events_dir.mkdir(parents=True)
+    provider = BatchMockProvider(failing_positions=frozenset({0}))
+
+    with StateStore(
+        settings.paths.state_database, output_root=settings.paths.output
+    ) as state:
+        result = _process_day_batched(
+            videos=[bad, good],
+            target_date=date(2026, 8, 16),
+            event_directory=events_dir,
+            settings=settings,
+            provider=provider,
+            analyzer=EventAnalyzer(settings, provider),
+            state=state,
+            force=False,
+        )
+        failed_records = state.list_records(status="failed")
+
+    assert [event.source_file for event in result.events] == [good.name]
+    assert len(result.failures) == 1
+    assert result.failures[0].source_file == bad.name
+    assert "synthetic batch rejection" in result.failures[0].error
+    assert len(list(events_dir.glob("*.json"))) == 1
+    # A rejected request is still billed, and the failure is recorded as such.
+    assert len(failed_records) == 1
+    assert failed_records[0].usage.request_count == 1
+    assert not list(settings.paths.temp.iterdir())
+
+
+def test_a_batch_that_cannot_be_submitted_fails_every_clip_in_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    input_root = tmp_path / "input"
+    input_root.mkdir()
+    videos = []
+    for stamp in ("20260816060000", "20260816143210"):
+        video = input_root / f"camera_00_{stamp}.mp4"
+        video.write_bytes(b"fake mp4")
+        videos.append(video)
+    _fake_frames(monkeypatch)
+
+    class UnsubmittableProvider(BatchMockProvider):
+        def generate_structured_batch(self, requests):
+            raise GenAIResponseError("batch submission failed: no such file")
+
+    settings = _batch_day_settings(tmp_path, input_root)
+    settings.paths.output.mkdir(parents=True)
+    events_dir = settings.paths.output / "2026-08-16" / "events"
+    events_dir.mkdir(parents=True)
+    provider = UnsubmittableProvider()
+
+    with StateStore(
+        settings.paths.state_database, output_root=settings.paths.output
+    ) as state:
+        result = _process_day_batched(
+            videos=videos,
+            target_date=date(2026, 8, 16),
+            event_directory=events_dir,
+            settings=settings,
+            provider=provider,
+            analyzer=EventAnalyzer(settings, provider),
+            state=state,
+            force=False,
+        )
+        failed_records = state.list_records(status="failed")
+
+    assert result.events == []
+    assert len(result.failures) == 2
+    assert all("no such file" in failure.error for failure in result.failures)
+    assert len(failed_records) == 2
+    assert not list(settings.paths.temp.iterdir())
+
+
+def test_daily_cli_uses_the_batch_path_when_the_provider_offers_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    input_root = tmp_path / "input"
+    day = input_root / "2026" / "08" / "16"
+    day.mkdir(parents=True)
+    for stamp in ("20260816060000", "20260816143210"):
+        (day / f"Security camera_00_{stamp}.mp4").write_bytes(b"fake mp4")
+
+    output = tmp_path / "output"
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        "\n".join(
+            [
+                "timezone: Asia/Tokyo",
+                "paths:",
+                f"  input: {input_root.as_posix()}",
+                f"  output: {output.as_posix()}",
+                f"  state: {(tmp_path / 'state').as_posix()}",
+                f"  temp: {(tmp_path / 'temp').as_posix()}",
+                "input:",
+                "  stable_seconds: 0",
+                "  stability_recheck_sec: 0",
+                "genai:",
+                "  provider: mock",
+                "  model: batch-mock-v1",
+                "  batch:",
+                "    enabled: true",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    _fake_frames(monkeypatch)
+
+    provider = BatchMockProvider()
+    monkeypatch.setattr("app.run_daily.create_provider", lambda settings: provider)
+    monkeypatch.delenv("GENAI_PROVIDER", raising=False)
+    monkeypatch.delenv("GENAI_MODEL", raising=False)
+
+    assert main(["--config", str(config), "--date", "2026-08-16"]) == 0
+
+    assert len(provider.batches) == 1
+    assert len(provider.batches[0]) == 2
+    assert len(list((output / "2026-08-16" / "events").glob("*.json"))) == 2
+    assert (output / "2026-08-16" / "daily_report.json").is_file()
+
+    # --sync keeps the same provider off the queue entirely.
+    provider.batches.clear()
+    assert (
+        main(["--config", str(config), "--date", "2026-08-16", "--sync", "--force"]) == 0
+    )
+    assert provider.batches == []
