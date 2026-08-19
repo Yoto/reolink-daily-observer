@@ -13,7 +13,7 @@ triage は画像を扱わないため、撮影場所の説明や抽出閾値を�
 1. 対象日の MP4 を列挙し、転送が完了していることを確認します。
 2. ffprobe で duration / resolution / fps / codec を取得します。
 3. ffmpeg で1秒間隔、長辺1280px、JPEG quality 85のフレームを一時抽出します。
-4. OpenAI の画像入力と Structured Outputs で、1 MP4 = 1 event JSON を生成します。
+4. OpenAI の画像入力と Structured Outputs で、1 MP4 = 1 event JSON を生成します。日単位の実行では、その日の未処理動画のリクエストをまとめて Batch API に投入し、完了を待ってから全件の結果を取り出します。
 5. event JSON と撮影場所の説明、直近の日報履歴を入力に triage を1回実行し、全イベントへ `assessment` / `person_type` / `notable` / `anomaly_score` を付与します。
 6. 閾値以上のスコア、または `notable` が記載されたイベントを要確認として抽出します（抽出はコード側で機械的に行い、モデルの選別に委ねません）。
 7. event JSON と triage 結果を入力に日報を生成し、JSON / Markdown / HTML に描画します。
@@ -24,6 +24,8 @@ triage の出力する event_id は必ずローカルの event 記録と突き�
 長い動画はフレームを時系列chunkに分割し、chunk結果を最後に1 eventへ統合します。一時JPEGはコンテナの `/tmp` に置き、処理後に削除します。
 
 `GENAI_PROVIDER=mock` は Docker、ffprobe、ffmpeg、状態管理、出力までの配管確認専用です。画像内容は解析しません。
+
+Batch API は同期実行より単価が安く、その代わり結果が返るまで最大24時間かかります。日次実行は前日分を対象にしているため、この待ち時間は運用上のスケジュールを崩しません。当日中に結果が必要な場合は `--sync` を付けます。
 
 ## セットアップ
 
@@ -55,6 +57,8 @@ ANALYZER_GID=10001
 GENAI_PROVIDER=openai
 GENAI_MODEL=gpt-5.6-luna
 OPENAI_API_KEY=replace-with-your-openai-api-key
+GENAI_BATCH_ENABLED=true
+ANALYZER_TMPFS_SIZE=4g
 LOG_LEVEL=INFO
 ```
 
@@ -123,6 +127,12 @@ docker compose --env-file .env run --rm analyzer analyze-video '/data/input/YYYY
 
 cacheを無視して再解析する場合だけ `--force` を追加します。
 
+Batch APIの完了を待たず、その場でリクエストを送って結果を得る場合は `--sync` を追加します。単価は上がりますが、数分で日報まで到達します。
+
+```powershell
+docker compose --env-file .env run --rm analyzer --date 2026-08-16 --sync
+```
+
 出力例:
 
 ```text
@@ -148,6 +158,39 @@ GENAI_MODEL=mock-observer-v1
 
 その後、通常と同じ `docker compose ... run --rm analyzer --date ...` を実行します。mock出力は映像内容の評価には使用できません。
 
+## Batch APIによる観察
+
+日単位の実行では、event観察（動画フレームを送る唯一の段）を OpenAI の Batch API に投入します。1日の各動画は互いに独立しており、実行対象も前日分なので、bulk queueの待ち時間と引き換えに単価を半分にできます。
+
+triage と日報生成は同期のままです。どちらも1日1リクエストで、しかも全eventの完了に依存するため、これらをbatchに載せると待ち時間だけがもう1回増えます。費用のほぼ全ては画像を含むevent観察側にあり、そこだけを移せば削減分はほぼ取り切れます。フレームを分割した長い動画の統合（synthesis）も、画像を送らずテキストだけで完結するため同期のままです。
+
+`analyze-video` は常に同期実行です。プロンプト評価のための単発実行で待つ意味がないためです。
+
+運用上の注意:
+
+- **投入前に全動画のフレームを抽出します。** 同期実行では1動画ずつ抽出して即座に削除しますが、batchでは投入時にまとめてbase64符号化するため、未処理動画すべてのJPEGが `paths.temp` に同時に存在します。compose では `/tmp` を tmpfs にしているため、`ANALYZER_TMPFS_SIZE`（既定 `4g`）で1日分の空きを確保してください。RAMを消費する点に注意してください。JSONLへの書き出しはリクエスト単位でストリームするので、メモリ上に載るのは常に1リクエスト分だけです。
+- **中断した実行は再開できません。** batch idはプロセスとログの中にしかないため、投入後にコンテナが落ちると、そのbatchの結果は自動では回収されません（ログに `batch submitted batch_id=...` として必ず残ります）。再実行すると同じ動画を投入し直すことになります。完了済みのeventはcacheが効くので二重課金されません。
+- **完了しないbatchは打ち切られます。** `max_wait_sec` を超えると、まだ実行中のbatchをcancelしてその日の該当動画を失敗として記録します。日報は生成され、終了コードは `2` になります。
+- **アップロードしたJSONLは削除します。** 1日分の入力は容易に数百MBになり、Project側のファイル容量を圧迫するためです。結果ファイルとエラーファイルは監査用に残します。この挙動は `delete_input_file: false` で止められます。
+- **費用の見積りは半額で計上されます。** `discount_ratio` はローカルの見積り計算にのみ使う係数で、送信内容には影響しません。請求画面が正です。
+
+```yaml
+genai:
+  batch:
+    enabled: true
+    completion_window: 24h
+    poll_interval_sec: 30
+    max_wait_sec: 90000
+    max_requests_per_batch: 50000
+    max_input_bytes: 180000000
+    discount_ratio: 0.5
+    delete_input_file: true
+```
+
+`enabled: false`、環境変数 `GENAI_BATCH_ENABLED=false`、実行時の `--sync` のいずれでも同期実行に戻せます。`mock` providerはbatchに対応しないため、設定に関わらず同期実行になります。
+
+1回のbatchに入る件数と容量には上限があるため、超える場合は自動的に複数のbatchに分割して投入し、すべての完了を待ちます。
+
 ## 主な設定
 
 `config/config.yaml`:
@@ -170,6 +213,9 @@ genai:
   chunk_overlap_frames: 2
   request_timeout_sec: 180
   max_output_tokens: 8192
+  batch:
+    enabled: true
+    max_wait_sec: 90000
 scene_file: scene.yaml
 triage:
   enabled: true
@@ -205,7 +251,9 @@ Windows Task Schedulerでは、04:00に次を起動します。
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\path\to\reolink\scripts\run_daily.ps1" -ProjectPath "C:\path\to\reolink" -LogPath "C:\reolink-analysis\daily.log"
 ```
 
-wrapperは `docker compose run --rm analyzer` を1回実行し、その終了コードを返します。特定日のbackfillには `-Date 2026-08-16`、明示的な再解析には `-Force` を追加します。
+既定ではevent観察がBatch APIの完了を待つため、1回の実行が数時間続くことがあります。前日分を対象にしている限り次回の起動と競合しませんが、タスクの実行時間上限を設定している場合は解除するか、`--sync` を付けてください。
+
+wrapperは `docker compose run --rm analyzer` を1回実行し、その終了コードを返します。特定日のbackfillには `-Date 2026-08-16`、明示的な再解析には `-Force`、batchを使わず即時実行する場合は `-Sync` を追加します。
 
 Linux移行用の例は `deploy/reolink-analyzer.service`、`.timer`、`crontab.example` にあります。systemd timerとcronはどちらか一方だけを使用してください。
 

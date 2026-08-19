@@ -113,6 +113,34 @@ class RetrySettings(SettingsModel):
     max_attempts: int = Field(default=4, ge=1)
 
 
+class BatchSettings(SettingsModel):
+    """Deferred bulk submission for the image-heavy event observation stage.
+
+    A day of recordings is a natural batch: every clip is independent, and the
+    daily run already looks at yesterday. Trading same-minute latency for the
+    provider's bulk discount therefore costs the schedule nothing, so this is
+    on by default and can be turned off per run with ``--sync``.
+    """
+
+    enabled: bool = True
+    completion_window: Literal["24h"] = "24h"
+    poll_interval_sec: float = Field(default=30.0, gt=0, le=3600)
+    # Slightly beyond the completion window, so a batch that is finishing right
+    # at the deadline is still collected instead of abandoned one minute early.
+    max_wait_sec: float = Field(default=90_000.0, gt=0)
+    # Provider ceilings for a single batch; a day is split across as many
+    # batches as these require.
+    max_requests_per_batch: int = Field(default=50_000, ge=1, le=50_000)
+    max_input_bytes: int = Field(default=180_000_000, gt=0, le=200_000_000)
+    # Batch requests are billed at half the synchronous rate. This only scales
+    # the locally computed estimate; it never changes what is sent.
+    discount_ratio: float = Field(default=0.5, gt=0, le=1)
+    # The uploaded JSONL is this run's scratch payload and, at roughly a
+    # megabyte per analyzed second of video, by far the largest object the run
+    # leaves in the project's file storage. Result files are always kept.
+    delete_input_file: bool = True
+
+
 class PricingSettings(SettingsModel):
     input_per_million_tokens: float | None = Field(default=None, ge=0)
     output_per_million_tokens: float | None = Field(default=None, ge=0)
@@ -132,6 +160,7 @@ class GenAISettings(SettingsModel):
     max_output_tokens: int = Field(default=32768, gt=0)
     retry: RetrySettings = Field(default_factory=RetrySettings)
     pricing: PricingSettings = Field(default_factory=PricingSettings)
+    batch: BatchSettings = Field(default_factory=BatchSettings)
 
     @field_validator("max_images_per_request", mode="before")
     @classmethod
@@ -329,6 +358,7 @@ _DIRECT_OVERRIDES: dict[str, tuple[str, ...]] = {
     "GENAI_MODEL": ("genai", "model"),
     "OPENAI_API_KEY": ("genai", "api_key"),
     "GENAI_MAX_IMAGES_PER_REQUEST": ("genai", "max_images_per_request"),
+    "GENAI_BATCH_ENABLED": ("genai", "batch", "enabled"),
 }
 
 
@@ -455,6 +485,7 @@ load_config = load_settings
 
 __all__ = [
     "AppSettings",
+    "BatchSettings",
     "Config",
     "FrameSettings",
     "GenAISettings",

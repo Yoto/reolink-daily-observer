@@ -12,19 +12,23 @@ import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Sequence
 from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
 
 from app.config import AppSettings, load_settings
 from app.daily_report import DailyRunStats, generate_daily_report, render_daily_report
-from app.event_analyzer import EVENT_ANALYSIS_PIPELINE_VERSION, EventAnalyzer
+from app.event_analyzer import (
+    EVENT_ANALYSIS_PIPELINE_VERSION,
+    EventAnalyzer,
+    PreparedEvent,
+)
 from app.genai import create_provider
-from app.genai.base import GenAIProvider
+from app.genai.base import BatchOutcome, BatchRequest, GenAIProvider, failure_usage
 from app.io_utils import atomic_write_json
 from app.models import APIUsage, DailyReport, Event, FailedEvent, SCHEMA_VERSION
-from app.state import CacheKey, FileFingerprint, StateStore
+from app.state import CacheKey, FileFingerprint, ProcessingClaim, StateStore
 from app.triage import HistoryEntry, TriageOutcome, run_triage
 from app.video import (
     FRAME_EXTRACTION_VERSION,
@@ -46,6 +50,23 @@ class DayResults:
     events: list[Event] = field(default_factory=list)
     failures: list[FailedEvent] = field(default_factory=list)
     new_usage: APIUsage = field(default_factory=APIUsage)
+
+
+@dataclass(slots=True)
+class _Pending:
+    """One clip prepared for a deferred batch, waiting for its result."""
+
+    position: int
+    video: Path
+    prepared: PreparedEvent
+    claim: ProcessingClaim
+    event_path: Path
+    recording_start: datetime | None
+    started: float
+
+
+class _UnstableInput(Exception):
+    """The source file changed, vanished, or is still being uploaded."""
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -71,6 +92,11 @@ def _daily_command(argv: Sequence[str]) -> int:
     parser.add_argument("--date", type=_iso_date, help="target date (YYYY-MM-DD)")
     parser.add_argument("--force", action="store_true", help="ignore event cache")
     parser.add_argument("--config", type=Path, help="YAML configuration path")
+    parser.add_argument(
+        "--sync",
+        action="store_true",
+        help="analyze events with immediate requests instead of the batch queue",
+    )
     args = parser.parse_args(argv)
 
     settings = _settings(args.config)
@@ -98,7 +124,19 @@ def _daily_command(argv: Sequence[str]) -> int:
         with StateStore(
             settings.paths.state_database, output_root=settings.paths.output
         ) as state:
-            results = _process_day(
+            batched = (
+                settings.genai.batch.enabled
+                and provider.supports_batch
+                and not args.sync
+            )
+            LOGGER.info(
+                "event stage mode=%s provider=%s clips=%d",
+                "batch" if batched else "sync",
+                provider.name,
+                len(videos),
+            )
+            run_day = _process_day_batched if batched else _process_day
+            results = run_day(
                 videos=videos,
                 target_date=target_date,
                 event_directory=event_directory,
@@ -245,39 +283,16 @@ def _process_day(
     state: StateStore,
     force: bool,
 ) -> DayResults:
+    """Analyze the day one clip at a time, each with immediate requests."""
+
     results = DayResults(detected=len(videos))
-    initial_snapshots = {}
-    for video in videos:
-        try:
-            initial_snapshots[video] = snapshot_file(video)
-        except OSError:
-            initial_snapshots[video] = None
-    if videos and settings.input.stability_recheck_sec:
-        LOGGER.info(
-            "verifying upload stability files=%d recheck_sec=%.1f stable_seconds=%d",
-            len(videos),
-            settings.input.stability_recheck_sec,
-            settings.input.stable_seconds,
-        )
-        time.sleep(settings.input.stability_recheck_sec)
+    snapshots = _stability_snapshots(videos, settings)
 
     for position, video in enumerate(videos, start=1):
         recording_start = None
         try:
             recording_start = parse_recording_time(video.name, settings.timezone)
-            previous_snapshot = initial_snapshots.get(video)
-            if previous_snapshot is None or not file_is_stable(
-                video,
-                settings.input.stable_seconds,
-                previous_snapshot=previous_snapshot,
-            ):
-                results.unstable += 1
-                LOGGER.warning(
-                    "skipping unstable/empty file file=%s stable_seconds=%d",
-                    video.name,
-                    settings.input.stable_seconds,
-                )
-                continue
+            previous_snapshot = _require_stable(video, settings, snapshots)
             fingerprint = FileFingerprint.from_path(
                 video, input_root=settings.paths.input
             )
@@ -302,48 +317,262 @@ def _process_day(
                 results.cached += 1
             else:
                 results.new_usage = results.new_usage.plus(event.processing.usage)
-            LOGGER.info(
-                "event complete index=%d/%d event_id=%s file=%s duration_sec=%.3f "
-                "frames=%d chunks=%d cached=%s provider=%s model=%s requests=%d "
-                "processing_sec=%.3f",
-                position,
-                len(videos),
-                event.event_id,
+            _log_event(
+                position=position,
+                total=len(videos),
+                event=event,
+                video=video,
+                cached=cached,
+                elapsed=time.perf_counter() - event_started,
+            )
+        except _UnstableInput:
+            results.unstable += 1
+            LOGGER.warning(
+                "skipping unstable/empty file file=%s stable_seconds=%d",
                 video.name,
-                event.duration_sec,
-                event.processing.frames_analyzed,
-                event.processing.chunk_count,
-                cached,
-                event.processing.provider,
-                event.processing.model,
-                0 if cached else event.processing.usage.request_count,
-                time.perf_counter() - event_started,
+                settings.input.stable_seconds,
             )
         except Exception as exc:
-            failed_usage = getattr(exc, "usage", APIUsage())
-            if isinstance(failed_usage, APIUsage):
-                results.new_usage = results.new_usage.plus(failed_usage)
-            error_text = _brief_error(exc)
-            results.failures.append(
-                FailedEvent(
-                    source_file=video.name,
-                    recording_time=recording_start,
-                    error=error_text,
-                )
+            _record_failure(
+                results, exc, video=video, recording_start=recording_start
             )
             LOGGER.exception(
                 "event failed index=%d/%d file=%s", position, len(videos), video.name
             )
             if not settings.processing.continue_on_error:
                 raise
-    results.events.sort(
-        key=lambda event: (
-            event.recording_start is None,
-            event.recording_start or datetime.max.replace(tzinfo=ZoneInfo("UTC")),
-            event.source_file,
-        )
-    )
+    _sort_events(results.events)
     return results
+
+
+def _process_day_batched(
+    *,
+    videos: Sequence[Path],
+    target_date: date,
+    event_directory: Path,
+    settings: AppSettings,
+    provider: GenAIProvider,
+    analyzer: EventAnalyzer,
+    state: StateStore,
+    force: bool,
+) -> DayResults:
+    """Prepare every clip, submit one deferred batch, then complete them all.
+
+    The clips of a day are independent and the run already targets yesterday,
+    so the bulk queue costs the schedule nothing and halves the bill. The price
+    is that frames for every uncached clip are extracted before anything is
+    sent, and stay on disk until the batch has been serialized.
+
+    A batch that never finishes cannot be resumed by a later run: the batch id
+    exists only in this process and in the log. That is why every submission is
+    logged with its id before anything else can fail.
+    """
+
+    results = DayResults(detected=len(videos))
+    snapshots = _stability_snapshots(videos, settings)
+    pending: list[_Pending] = []
+    try:
+        for position, video in enumerate(videos, start=1):
+            recording_start = None
+            claim: ProcessingClaim | None = None
+            try:
+                recording_start = parse_recording_time(video.name, settings.timezone)
+                previous_snapshot = _require_stable(video, settings, snapshots)
+                fingerprint = FileFingerprint.from_path(
+                    video, input_root=settings.paths.input
+                )
+                event_id = _event_id(target_date, fingerprint.source_path)
+                started = time.perf_counter()
+                key = _cache_key(fingerprint, settings, provider)
+                resolved = _resolve_or_claim(
+                    video=video,
+                    event_id=event_id,
+                    key=key,
+                    fingerprint=fingerprint,
+                    settings=settings,
+                    state=state,
+                    force=force,
+                )
+                if isinstance(resolved, Event):
+                    results.events.append(resolved)
+                    results.cached += 1
+                    _log_event(
+                        position=position,
+                        total=len(videos),
+                        event=resolved,
+                        video=video,
+                        cached=True,
+                        elapsed=time.perf_counter() - started,
+                    )
+                    continue
+                claim = resolved
+                prepared = analyzer.prepare_file(
+                    video,
+                    event_id=event_id,
+                    source_file=video.name,
+                    recording_start=recording_start,
+                    analysis_signature=key.prompt_version,
+                    source_fingerprint=_fingerprint_digest(fingerprint),
+                    expected_snapshot=previous_snapshot,
+                )
+                pending.append(
+                    _Pending(
+                        position=position,
+                        video=video,
+                        prepared=prepared,
+                        claim=claim,
+                        event_path=event_directory / f"event_{event_id}.json",
+                        recording_start=recording_start,
+                        started=started,
+                    )
+                )
+            except _UnstableInput:
+                results.unstable += 1
+                LOGGER.warning(
+                    "skipping unstable/empty file file=%s stable_seconds=%d",
+                    video.name,
+                    settings.input.stable_seconds,
+                )
+            except Exception as exc:
+                _mark_failed(state, claim, exc, recording_start)
+                _record_failure(
+                    results, exc, video=video, recording_start=recording_start
+                )
+                LOGGER.exception(
+                    "event preparation failed index=%d/%d file=%s",
+                    position,
+                    len(videos),
+                    video.name,
+                )
+                if not settings.processing.continue_on_error:
+                    raise
+
+        outcomes = _submit_batch(
+            pending, provider=provider, settings=settings, state=state, results=results
+        )
+        for item in pending:
+            # The frames are inside the request bodies now; nothing below reads
+            # them, and a day of JPEGs is not worth holding through synthesis.
+            item.prepared.release()
+        # A batch that could not be produced at all has already failed every
+        # clip in it, so there is nothing left to complete.
+        for item in pending if outcomes is not None else ():
+            try:
+                event = analyzer.complete(item.prepared, outcomes)
+                _store_event(
+                    event,
+                    claim=item.claim,
+                    event_path=item.event_path,
+                    settings=settings,
+                    state=state,
+                )
+            except Exception as exc:
+                _mark_failed(state, item.claim, exc, item.recording_start)
+                _record_failure(
+                    results,
+                    exc,
+                    video=item.video,
+                    recording_start=item.recording_start,
+                )
+                LOGGER.exception(
+                    "event failed index=%d/%d file=%s",
+                    item.position,
+                    len(videos),
+                    item.video.name,
+                )
+                if not settings.processing.continue_on_error:
+                    raise
+                continue
+            results.events.append(event)
+            results.new_usage = results.new_usage.plus(event.processing.usage)
+            _log_event(
+                position=item.position,
+                total=len(videos),
+                event=event,
+                video=item.video,
+                cached=False,
+                elapsed=time.perf_counter() - item.started,
+            )
+    finally:
+        for item in pending:
+            item.prepared.release()
+    _sort_events(results.events)
+    return results
+
+
+def _submit_batch(
+    pending: Sequence[_Pending],
+    *,
+    provider: GenAIProvider,
+    settings: AppSettings,
+    state: StateStore,
+    results: DayResults,
+) -> dict[str, BatchOutcome[Any]] | None:
+    """Send every prepared chunk as one batch and wait for the whole day.
+
+    Returns ``None`` when the batch could not be produced at all, which fails
+    every clip in it; a batch that merely contains failed requests returns
+    normally and is reported per clip.
+    """
+
+    if not pending:
+        return {}
+    requests: list[BatchRequest[Any]] = [
+        request for item in pending for request in item.prepared.requests
+    ]
+    LOGGER.info(
+        "submitting event batch clips=%d requests=%d frame_bytes=%d",
+        len(pending),
+        len(requests),
+        sum(item.prepared.frame_bytes for item in pending),
+    )
+    try:
+        return provider.generate_structured_batch(requests)
+    except Exception as exc:
+        LOGGER.exception("event batch failed clips=%d", len(pending))
+        for item in pending:
+            _mark_failed(state, item.claim, exc, item.recording_start)
+            _record_failure(
+                results, exc, video=item.video, recording_start=item.recording_start
+            )
+        if not settings.processing.continue_on_error:
+            raise
+        return None
+
+
+def _stability_snapshots(
+    videos: Sequence[Path], settings: AppSettings
+) -> dict[Path, FileSnapshot | None]:
+    """Snapshot every file once, then wait, so a single pause covers them all."""
+
+    snapshots: dict[Path, FileSnapshot | None] = {}
+    for video in videos:
+        try:
+            snapshots[video] = snapshot_file(video)
+        except OSError:
+            snapshots[video] = None
+    if videos and settings.input.stability_recheck_sec:
+        LOGGER.info(
+            "verifying upload stability files=%d recheck_sec=%.1f stable_seconds=%d",
+            len(videos),
+            settings.input.stability_recheck_sec,
+            settings.input.stable_seconds,
+        )
+        time.sleep(settings.input.stability_recheck_sec)
+    return snapshots
+
+
+def _require_stable(
+    video: Path,
+    settings: AppSettings,
+    snapshots: dict[Path, FileSnapshot | None],
+) -> FileSnapshot:
+    previous_snapshot = snapshots.get(video)
+    if previous_snapshot is None or not file_is_stable(
+        video, settings.input.stable_seconds, previous_snapshot=previous_snapshot
+    ):
+        raise _UnstableInput(video.name)
+    return previous_snapshot
 
 
 def _process_one(
@@ -360,7 +589,47 @@ def _process_one(
     force: bool,
     expected_snapshot: FileSnapshot | None,
 ) -> tuple[Event, bool]:
-    key = CacheKey(
+    key = _cache_key(fingerprint, settings, provider)
+    resolved = _resolve_or_claim(
+        video=video,
+        event_id=event_id,
+        key=key,
+        fingerprint=fingerprint,
+        settings=settings,
+        state=state,
+        force=force,
+    )
+    if isinstance(resolved, Event):
+        return resolved, True
+    claim = resolved
+
+    try:
+        event = analyzer.analyze_file(
+            video,
+            event_id=event_id,
+            source_file=video.name,
+            recording_start=recording_start,
+            analysis_signature=key.prompt_version,
+            source_fingerprint=_fingerprint_digest(fingerprint),
+            expected_snapshot=expected_snapshot,
+        )
+        _store_event(
+            event,
+            claim=claim,
+            event_path=event_path,
+            settings=settings,
+            state=state,
+        )
+        return event, False
+    except Exception as exc:
+        _mark_failed(state, claim, exc, recording_start)
+        raise
+
+
+def _cache_key(
+    fingerprint: FileFingerprint, settings: AppSettings, provider: GenAIProvider
+) -> CacheKey:
+    return CacheKey(
         fingerprint=fingerprint,
         provider=provider.name,
         model=provider.model,
@@ -368,19 +637,29 @@ def _process_one(
         schema_version=SCHEMA_VERSION,
     )
 
+
+def _resolve_or_claim(
+    *,
+    video: Path,
+    event_id: str,
+    key: CacheKey,
+    fingerprint: FileFingerprint,
+    settings: AppSettings,
+    state: StateStore,
+    force: bool,
+) -> Event | ProcessingClaim:
+    """Return a reusable event, or the claim that authorizes reprocessing."""
+
     cache = None if force else state.get_cached_record(key)
     if cache is not None and cache.event_json_path:
         try:
-            return (
-                _load_cached_event(
-                    cache.event_json_path,
-                    event_id=event_id,
-                    source_file=video.name,
-                    key=key,
-                    fingerprint=fingerprint,
-                    settings=settings,
-                ),
-                True,
+            return _load_cached_event(
+                cache.event_json_path,
+                event_id=event_id,
+                source_file=video.name,
+                key=key,
+                fingerprint=fingerprint,
+                settings=settings,
             )
         except (OSError, ValidationError, ValueError):
             LOGGER.warning(
@@ -397,16 +676,13 @@ def _process_one(
     )
     if not claim.should_process and claim.record.event_json_path:
         try:
-            return (
-                _load_cached_event(
-                    claim.record.event_json_path,
-                    event_id=event_id,
-                    source_file=video.name,
-                    key=key,
-                    fingerprint=fingerprint,
-                    settings=settings,
-                ),
-                True,
+            return _load_cached_event(
+                claim.record.event_json_path,
+                event_id=event_id,
+                source_file=video.name,
+                key=key,
+                fingerprint=fingerprint,
+                settings=settings,
             )
         except (OSError, ValidationError, ValueError):
             LOGGER.warning(
@@ -419,42 +695,100 @@ def _process_one(
                 force=True,
                 require_event_file=True,
             )
+    return claim
 
+
+def _store_event(
+    event: Event,
+    *,
+    claim: ProcessingClaim,
+    event_path: Path,
+    settings: AppSettings,
+    state: StateStore,
+) -> None:
+    atomic_write_json(event_path, event)
     try:
-        event = analyzer.analyze_file(
-            video,
-            event_id=event_id,
+        stored_path = event_path.relative_to(settings.paths.output)
+    except ValueError:
+        stored_path = event_path
+    state.mark_completed(
+        claim.record.id,
+        event_json_path=stored_path,
+        usage=event.processing.usage,
+        recording_time=event.recording_start,
+        event_id=event.event_id,
+    )
+
+
+def _mark_failed(
+    state: StateStore,
+    claim: ProcessingClaim | None,
+    exc: BaseException,
+    recording_start: datetime | None,
+) -> None:
+    if claim is None:
+        return
+    state.mark_failed(
+        claim.record.id,
+        error=exc,
+        usage=failure_usage(exc),
+        recording_time=recording_start,
+    )
+
+
+def _record_failure(
+    results: DayResults,
+    exc: BaseException,
+    *,
+    video: Path,
+    recording_start: datetime | None,
+) -> None:
+    results.new_usage = results.new_usage.plus(failure_usage(exc))
+    results.failures.append(
+        FailedEvent(
             source_file=video.name,
-            recording_start=recording_start,
-            analysis_signature=key.prompt_version,
-            source_fingerprint=_fingerprint_digest(fingerprint),
-            expected_snapshot=expected_snapshot,
-        )
-        atomic_write_json(event_path, event)
-        try:
-            stored_path = event_path.relative_to(settings.paths.output)
-        except ValueError:
-            stored_path = event_path
-        state.mark_completed(
-            claim.record.id,
-            event_json_path=stored_path,
-            usage=event.processing.usage,
-            recording_time=event.recording_start,
-            event_id=event.event_id,
-        )
-        return event, False
-    except Exception as exc:
-        state.mark_failed(
-            claim.record.id,
-            error=exc,
-            usage=(
-                getattr(exc, "usage", None)
-                if isinstance(getattr(exc, "usage", None), APIUsage)
-                else None
-            ),
             recording_time=recording_start,
+            error=_brief_error(exc),
         )
-        raise
+    )
+
+
+def _log_event(
+    *,
+    position: int,
+    total: int,
+    event: Event,
+    video: Path,
+    cached: bool,
+    elapsed: float,
+) -> None:
+    LOGGER.info(
+        "event complete index=%d/%d event_id=%s file=%s duration_sec=%.3f "
+        "frames=%d chunks=%d cached=%s provider=%s model=%s requests=%d "
+        "processing_sec=%.3f",
+        position,
+        total,
+        event.event_id,
+        video.name,
+        event.duration_sec,
+        event.processing.frames_analyzed,
+        event.processing.chunk_count,
+        cached,
+        event.processing.provider,
+        event.processing.model,
+        0 if cached else event.processing.usage.request_count,
+        elapsed,
+    )
+
+
+def _sort_events(events: list[Event]) -> None:
+    events.sort(
+        key=lambda event: (
+            event.recording_start is None,
+            event.recording_start or datetime.max.replace(tzinfo=ZoneInfo("UTC")),
+            event.source_file,
+        )
+    )
 
 
 def _load_cached_event(
