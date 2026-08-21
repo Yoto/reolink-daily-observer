@@ -8,7 +8,7 @@ Reolink RLC-823S1 が FTP 転送した MP4 を日単位で観察し、1動画ご
 
 1. 対象日の MP4 を列挙し、転送が完了していることを確認します。
 2. ffprobe で duration / resolution / fps / codec を取得します。
-3. ffmpeg で1秒間隔、長辺1280px、JPEG quality 85のフレームを一時抽出します。
+3. 先頭5秒の縮小フレームから彩度と暗部率を測り、明らかな昼だけ長辺768px、それ以外は1280pxとして、1秒間隔・JPEG quality 85のフレームを一時抽出します。
 4. OpenAI の画像入力と Structured Outputs で、1 MP4 = 1 event JSON を生成します。
 5. event JSON だけを入力にして日報を生成し、JSON / Markdown / HTML に描画します。
 6. fingerprint、処理結果、API usage を SQLite に記録し、変更のない再実行をcacheします。
@@ -126,6 +126,16 @@ frames:
   max_long_edge_px: 1280
   jpeg_quality: 85
   ffmpeg_timeout_sec: 900
+  resolution_reduction:
+    enabled: true
+    daytime_max_long_edge_px: 768
+    sample_frames: 5
+    interval_sec: 1
+    sample_width: 160
+    sample_height: 90
+    saturation_threshold: 20
+    dark_luminance_threshold: 40
+    dark_ratio_threshold: 0.20
 genai:
   provider: openai
   model: gpt-5.6-luna
@@ -136,6 +146,8 @@ genai:
 processing:
   continue_on_error: true
 ```
+
+解像度削減は動画単体で完結し、録画時刻・緯度経度・前動画の状態は使いません。先頭5フレームの彩度中央値が20を超え、かつ輝度40未満の暗部率が20%未満の場合だけ昼とみなします。境界値、映像デコーダ警告、計測失敗はすべて安全側の1280pxです。`frames.resolution_reduction.enabled: false` で従来どおり常に1280pxへ戻せます。
 
 `gpt-5.6-luna` はコストを抑えた既定値です。model ID、利用可否、料金はOpenAI側で変更され得るため、実行前に契約Projectで確認してください。料金見積りは `config/config.yaml` の単価による参考値で、請求画面が正です。
 

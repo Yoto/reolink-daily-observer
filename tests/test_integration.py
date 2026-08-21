@@ -36,9 +36,15 @@ from app.models import (
 )
 from app.run_daily import main
 from app.run_daily import _process_day
+from app.run_daily import _cache_prompt_version
 from app.genai.mock import MockProvider
 from app.state import StateStore
-from app.video import ExtractedFrame, VideoMetadata as ProbedVideoMetadata
+from app.video import (
+    DaylightFeatures,
+    ExtractedFrame,
+    VideoProcessingError,
+    VideoMetadata as ProbedVideoMetadata,
+)
 
 
 def test_chunk_frames_honors_bytes_count_and_overlap(tmp_path: Path) -> None:
@@ -117,6 +123,53 @@ def test_event_chunk_failure_preserves_prior_and_failed_response_usage(
     assert captured.value.usage.input_tokens == 17
     assert captured.value.usage.output_tokens == 7
     assert captured.value.usage.request_count == 3
+
+
+def test_resolution_selection_is_conservative_on_warning_failure_and_disable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = AppSettings.model_validate(
+        {"genai": {"provider": "mock", "model": "mock-observer-v1"}}
+    )
+    analyzer = EventAnalyzer(settings, MockProvider())
+    video = Path("camera.mp4")
+
+    monkeypatch.setattr(
+        "app.event_analyzer.measure_daylight_features",
+        lambda *args, **kwargs: DaylightFeatures(
+            sampled_frames=5,
+            median_saturation=30,
+            dark_ratio=0.06,
+            decoder_warning=True,
+        ),
+    )
+    assert analyzer._select_max_long_edge_px(video) == 1280
+
+    def fail_measurement(*args, **kwargs):
+        raise VideoProcessingError("ffmpeg daylight sampling", "synthetic failure")
+
+    monkeypatch.setattr(
+        "app.event_analyzer.measure_daylight_features",
+        fail_measurement,
+    )
+    assert analyzer._select_max_long_edge_px(video) == 1280
+
+    settings.frames.resolution_reduction.enabled = False
+    monkeypatch.setattr(
+        "app.event_analyzer.measure_daylight_features",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("disabled selector must not sample")
+        ),
+    )
+    assert analyzer._select_max_long_edge_px(video) == 1280
+
+
+def test_resolution_settings_are_part_of_event_cache_signature() -> None:
+    settings = AppSettings()
+    original = _cache_prompt_version(settings)
+    settings.frames.resolution_reduction.dark_ratio_threshold = 0.19
+
+    assert _cache_prompt_version(settings) != original
 
 
 class SpyDailyProvider(GenAIProvider):
@@ -260,7 +313,7 @@ def test_daily_cli_offline_e2e_and_second_run_reuses_events(
         encoding="utf-8",
     )
 
-    calls = {"probe": 0, "extract": 0}
+    calls = {"probe": 0, "measure": 0, "extract": 0}
 
     def fake_probe(path: Path, **kwargs) -> ProbedVideoMetadata:
         calls["probe"] += 1
@@ -270,6 +323,7 @@ def test_daily_cli_offline_e2e_and_second_run_reuses_events(
 
     def fake_extract(video_path: Path, output_dir: Path, **kwargs):
         calls["extract"] += 1
+        assert kwargs["max_long_edge_px"] == 768
         values = []
         for index in range(2):
             frame = Path(output_dir) / f"frame_{index:06d}.jpg"
@@ -277,13 +331,22 @@ def test_daily_cli_offline_e2e_and_second_run_reuses_events(
             values.append(ExtractedFrame(frame, float(index), index))
         return values
 
+    def fake_measure(video_path: Path, **kwargs) -> DaylightFeatures:
+        calls["measure"] += 1
+        return DaylightFeatures(
+            sampled_frames=5,
+            median_saturation=30,
+            dark_ratio=0.06,
+        )
+
     monkeypatch.setattr("app.event_analyzer.probe_video", fake_probe)
+    monkeypatch.setattr("app.event_analyzer.measure_daylight_features", fake_measure)
     monkeypatch.setattr("app.event_analyzer.extract_frames", fake_extract)
     monkeypatch.delenv("GENAI_PROVIDER", raising=False)
     monkeypatch.delenv("GENAI_MODEL", raising=False)
 
     assert main(["--config", str(config), "--date", "2026-08-16"]) == 0
-    assert calls == {"probe": 2, "extract": 2}
+    assert calls == {"probe": 2, "measure": 2, "extract": 2}
     events = sorted((output / "2026-08-16" / "events").glob("*.json"))
     assert len(events) == 2
     assert (output / "2026-08-16" / "daily_report.json").is_file()
@@ -292,7 +355,7 @@ def test_daily_cli_offline_e2e_and_second_run_reuses_events(
 
     # Exact fingerprint/model/prompt/schema cache prevents ffmpeg/VLM reuse.
     assert main(["--config", str(config), "--date", "2026-08-16"]) == 0
-    assert calls == {"probe": 2, "extract": 2}
+    assert calls == {"probe": 2, "measure": 2, "extract": 2}
     report = json.loads(
         (output / "2026-08-16" / "daily_report.json").read_text(encoding="utf-8")
     )
@@ -307,13 +370,14 @@ def test_daily_cli_offline_e2e_and_second_run_reuses_events(
         encoding="utf-8",
     )
     assert main(["--config", str(config), "--date", "2026-08-16"]) == 0
-    assert calls == {"probe": 4, "extract": 4}
+    assert calls == {"probe": 4, "measure": 4, "extract": 4}
 
     config.write_text(original_config, encoding="utf-8")
     assert main(["--config", str(config), "--date", "2026-08-16"]) == 0
-    assert calls == {"probe": 6, "extract": 6}
+    assert calls == {"probe": 6, "measure": 6, "extract": 6}
     final_event = json.loads(events[0].read_text(encoding="utf-8"))
     assert final_event["processing"]["model"] == "mock-observer-v1"
+    assert final_event["processing"]["frame_max_long_edge_px"] == 768
 
 
 def test_one_video_failure_does_not_stop_remaining_files(tmp_path: Path) -> None:

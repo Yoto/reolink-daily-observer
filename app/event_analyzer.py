@@ -32,6 +32,7 @@ from app.video import (
     VideoMetadata,
     VideoProcessingError,
     extract_frames,
+    measure_daylight_features,
     parse_recording_time,
     probe_video,
     recording_end,
@@ -74,6 +75,8 @@ class EventAnalyzer:
                 video_path.name, self.settings.timezone
             )
 
+        max_long_edge_px = self._select_max_long_edge_px(video_path)
+
         temp_root = self.settings.paths.temp
         temp_root.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(
@@ -83,7 +86,7 @@ class EventAnalyzer:
                 video_path,
                 Path(temporary),
                 interval_sec=self.settings.frames.interval_sec,
-                max_long_edge_px=self.settings.frames.max_long_edge_px,
+                max_long_edge_px=max_long_edge_px,
                 jpeg_quality=self.settings.frames.jpeg_quality,
                 timeout_sec=self.settings.frames.ffmpeg_timeout_sec,
             )
@@ -96,10 +99,11 @@ class EventAnalyzer:
                     "source size or mtime changed during frame extraction",
                 )
             LOGGER.info(
-                "extracted frames event_id=%s duration_sec=%.3f frames=%d",
+                "extracted frames event_id=%s duration_sec=%.3f frames=%d max_edge=%d",
                 event_id,
                 metadata.duration_sec,
                 len(frames),
+                max_long_edge_px,
             )
             analysis, usage, chunk_count = self._observe(
                 frames=frames,
@@ -117,6 +121,7 @@ class EventAnalyzer:
             analysis_signature=analysis_signature,
             source_fingerprint=source_fingerprint,
             frame_interval_sec=self.settings.frames.interval_sec,
+            frame_max_long_edge_px=max_long_edge_px,
             frames_analyzed=len(frames),
             chunk_count=chunk_count,
             processing_time_sec=time.perf_counter() - started,
@@ -144,6 +149,51 @@ class EventAnalyzer:
             ),
             processing=processing,
         )
+
+    def _select_max_long_edge_px(self, video_path: Path) -> int:
+        high_resolution = self.settings.frames.max_long_edge_px
+        reduction = self.settings.frames.resolution_reduction
+        if not reduction.enabled:
+            return high_resolution
+
+        try:
+            features = measure_daylight_features(
+                video_path,
+                sample_frames=reduction.sample_frames,
+                interval_sec=reduction.interval_sec,
+                sample_width=reduction.sample_width,
+                sample_height=reduction.sample_height,
+                dark_luminance_threshold=reduction.dark_luminance_threshold,
+                timeout_sec=self.settings.frames.ffmpeg_timeout_sec,
+            )
+        except VideoProcessingError as exc:
+            LOGGER.warning(
+                "daylight sampling failed file=%s; using max_edge=%d: %s",
+                video_path.name,
+                high_resolution,
+                exc,
+            )
+            return high_resolution
+
+        selected = (
+            reduction.daytime_max_long_edge_px
+            if features.is_daylike(
+                saturation_threshold=reduction.saturation_threshold,
+                dark_ratio_threshold=reduction.dark_ratio_threshold,
+            )
+            else high_resolution
+        )
+        LOGGER.info(
+            "selected frame resolution file=%s max_edge=%d sampled_frames=%d "
+            "median_saturation=%.3f dark_ratio=%.4f decoder_warning=%s",
+            video_path.name,
+            selected,
+            features.sampled_frames,
+            features.median_saturation,
+            features.dark_ratio,
+            features.decoder_warning,
+        )
+        return selected
 
     def _observe(
         self,

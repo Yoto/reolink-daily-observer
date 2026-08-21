@@ -11,9 +11,11 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from app.video import (
+    DaylightFeatures,
     VideoProcessingError,
     extract_frames,
     file_is_stable,
+    measure_daylight_features,
     parse_recording_time,
     probe_video,
     recording_end,
@@ -220,6 +222,103 @@ def test_extract_frames_builds_portable_filter_and_returns_time_order(
     assert "min(ih,1280)" in video_filter
     assert "flags=lanczos" in video_filter
     assert seen[seen.index("-q:v") + 1] == "6"
+
+
+def test_measure_daylight_features_uses_leading_tiny_rgb_frames(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[str] = []
+    # Three identical, clearly lit and colorful 2x1 frames.
+    raw_frame = bytes((80, 160, 80)) * 2
+
+    def fake_run(command: list[str], **kwargs: object) -> SimpleNamespace:
+        seen.extend(command)
+        assert kwargs["text"] is False
+        return SimpleNamespace(
+            returncode=0,
+            stdout=raw_frame * 3,
+            stderr=b"",
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    features = measure_daylight_features(
+        "camera.mp4",
+        sample_frames=3,
+        sample_width=2,
+        sample_height=1,
+    )
+
+    assert features.sampled_frames == 3
+    assert features.median_saturation == pytest.approx(127.5)
+    assert features.dark_ratio == 0
+    assert not features.decoder_warning
+    assert features.is_daylike(saturation_threshold=20, dark_ratio_threshold=0.2)
+    assert seen[seen.index("-frames:v") + 1] == "3"
+    assert seen[seen.index("-pix_fmt") + 1] == "rgb24"
+    video_filter = seen[seen.index("-vf") + 1]
+    assert "fps=1:start_time=0" in video_filter
+    assert "scale=2:1" in video_filter
+
+
+def test_measure_daylight_features_keeps_decoder_warning_on_safe_resolution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw_frame = bytes((80, 160, 80)) * 2
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=0,
+            stdout=raw_frame,
+            stderr=b"[hevc @ 0001] PPS changed between slices",
+        ),
+    )
+
+    features = measure_daylight_features(
+        "damaged.mp4",
+        sample_frames=1,
+        sample_width=2,
+        sample_height=1,
+    )
+
+    assert features.decoder_warning
+    assert not features.is_daylike(saturation_threshold=20, dark_ratio_threshold=0.2)
+
+
+def test_measure_daylight_features_reports_ffmpeg_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=1,
+            stdout=b"",
+            stderr=b"invalid video data",
+        ),
+    )
+
+    with pytest.raises(VideoProcessingError, match="invalid video data"):
+        measure_daylight_features("broken.mp4")
+
+
+@pytest.mark.parametrize(
+    ("features", "expected"),
+    [
+        (DaylightFeatures(5, 20.0, 0.1), False),
+        (DaylightFeatures(5, 21.0, 0.2), False),
+        (DaylightFeatures(5, 21.0, 0.199), True),
+        (DaylightFeatures(5, 21.0, 0.1, decoder_warning=True), False),
+    ],
+)
+def test_daylike_thresholds_are_strict(
+    features: DaylightFeatures,
+    expected: bool,
+) -> None:
+    assert (
+        features.is_daylike(saturation_threshold=20, dark_ratio_threshold=0.2)
+        is expected
+    )
 
 
 def test_extract_frames_rejects_stale_output(tmp_path: Path) -> None:
