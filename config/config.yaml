@@ -41,21 +41,71 @@ genai:
   max_inline_image_bytes: 13000000
   chunk_overlap_frames: 2
   request_timeout_sec: 180
-  max_output_tokens: 8192
+  # Triage answers for every event of the day in one response, so this scales
+  # with the busiest day rather than with a single event. A 47-event day needs
+  # roughly 9.6k output tokens; 8192 truncated the JSON mid-string and lost the
+  # whole triage stage. Changing this value invalidates cached event JSON.
+  max_output_tokens: 32768
   retry:
     max_attempts: 4
+  # Event observation is submitted as one deferred batch per day. Every clip of
+  # a day is independent and the run already targets yesterday, so waiting for
+  # the bulk queue costs the schedule nothing and halves the bill. triage and
+  # the daily report stay synchronous: they are one request each and depend on
+  # the events, so queueing them would add another wait for a rounding error.
+  # Use --sync for a same-minute run.
+  batch:
+    enabled: true
+    completion_window: 24h
+    poll_interval_sec: 30
+    # A little past the completion window, so a batch finishing at the deadline
+    # is still collected.
+    max_wait_sec: 90000
+    max_requests_per_batch: 50000
+    max_input_bytes: 180000000
+    # Batch requests bill at half the synchronous rate; this only scales the
+    # locally computed cost estimate.
+    discount_ratio: 0.5
+    # Remove the uploaded JSONL once the batch reaches a terminal state. The
+    # result and error files are always kept.
+    delete_input_file: true
   pricing:
     input_per_million_tokens: 0.20
     output_per_million_tokens: 1.20
     currency: USD
 
 prompts:
-  event: prompts/event_observation_v1.txt
+  event: prompts/event_observation_v2.txt
   event_synthesis: prompts/event_synthesis_v1.txt
-  daily_report: prompts/daily_report_v1.txt
-  event_version: event_observation_v1
+  triage: prompts/triage_v2.txt
+  daily_report: prompts/daily_report_v2.txt
+  event_version: event_observation_v2
   event_synthesis_version: event_synthesis_v1
-  daily_report_version: daily_report_v1
+  triage_version: triage_v2
+  daily_report_version: daily_report_v2
+
+# The scene description names a household and its habits, so it is kept out of
+# this file, out of version control, and out of the image. Copy
+# config/scene.example.yaml to config/scene.yaml and edit it; compose mounts
+# ./config read-only, so the container reads it at /config/scene.yaml.
+# A relative path is resolved against this file's directory first.
+# ANALYZER_SCENE_FILE overrides it. Leaving it unset is supported: prompts then
+# omit the scene block entirely.
+scene_file: scene.yaml
+
+triage:
+  enabled: true
+  # Events scoring at or above this are surfaced in the report.
+  attention_score_threshold: 7
+  # A non-null "notable" is surfaced regardless of score.
+  notable_always_attention: true
+  # An event explained by a documented routine cannot exceed this score.
+  routine_explained_score_cap: 4
+  # Report one visit split across several clips as a single item.
+  group_related_events: true
+  # Prior daily reports supplied as a baseline for novelty judgement.
+  history_days: 14
+  max_attention_items: 20
 
 report:
   json: true

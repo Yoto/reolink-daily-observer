@@ -1,0 +1,30 @@
+# Normalize text in the repository, and decide line endings per file type
+# rather than per developer. Git for Windows defaults to core.autocrlf=true,
+# which rewrites checked-out files to CRLF; a CRLF shebang makes the kernel
+# look for an interpreter named "/bin/sh\r" and the container then fails with
+# a misleading "no such file or directory".
+* text=auto eol=lf
+
+# Files consumed by Linux inside the container must keep LF regardless of the
+# host, so list them explicitly instead of relying on content detection.
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.py text eol=lf
+*.txt text eol=lf
+*.j2 text eol=lf
+
+# Windows-side helpers stay CRLF: PowerShell and cmd read either, but editors
+# and Task Scheduler behave better with native endings.
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Never let Git touch these.
+*.mp4 binary
+*.jpg binary
+*.jpeg binary
+*.png binary
+*.sqlite binary
+*.bundle binary

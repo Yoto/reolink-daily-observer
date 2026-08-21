@@ -30,3 +30,9 @@ state/
 *.sqlite-wal
 *.mp4
 *.jpg
+
+# Scene description contains household details; keep it out of the repository
+config/scene.yaml
+config/scene.local.yaml
+config/scene.*.yaml
+!config/scene.example.yaml

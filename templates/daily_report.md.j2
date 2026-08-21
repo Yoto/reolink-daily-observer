@@ -2,9 +2,48 @@
 
 {{ report.date_ja }}
 
+{% if report.triage.failed %}
+**要確認の判定は失敗しました。** 以下は判定なしの記録です。
+{% elif report.triage.enabled and report.triage.evaluated %}
+**要確認 {{ report.triage.attention }}件** / 判定済み {{ report.triage.evaluated }}件
+{% elif report.triage.enabled %}
+**判定は行われませんでした。** 以下は判定なしの記録です。
+{% endif %}
+
 ## 本日の概要
 
 {{ report.overview }}
+
+{% if report.attention_items %}
+## 要確認
+
+{% for item in report.attention_items %}
+### {% if item.recording_time %}{{ item.recording_time_display }}{% else %}録画時刻不明{% endif %} — 異常度 {{ item.anomaly_score }}/10（{{ item.person_type_label }}）
+
+{% if item.notable %}**{{ item.notable }}**
+
+{% endif %}{{ item.assessment }}
+{% if item.routine_explanation %}
+普段との対応: {{ item.routine_explanation }}
+{% endif %}
+元動画: `{{ item.source_file }}`
+イベントID: `{{ item.event_id }}`
+{% if item.related_event_ids %}同じ出来事の関連動画: {{ item.related_event_ids | length }}件（{{ item.related_event_ids | join(', ') }}）
+{% endif %}
+{% endfor %}
+{% elif report.triage.enabled and report.triage.evaluated and not report.triage.failed %}
+## 要確認
+
+該当なし。判定した{{ report.triage.evaluated }}件はいずれも平常の範囲でした。
+{% endif %}
+
+{% if report.day_notes %}
+## その日全体の所見
+
+{% for note in report.day_notes %}
+- {{ note }}
+{% endfor %}
+{% endif %}
 
 {% if report.recurring_patterns %}
 ## 全体に見られた様子
@@ -48,6 +87,11 @@
 - キャッシュ再利用: {{ report.processing.cached }}件
 - 未完了転送として保留: {{ report.processing.unstable }}件
 - 解析失敗: {{ report.processing.failed }}件
+- triage評価: {{ report.triage.evaluated }}件（閾値 {{ report.triage.threshold }} 以上または要注意記載を抽出）
+- 同一の出来事としてまとめた件数: {{ report.triage.grouped }}件
+- 普段の行動として説明がついた件数: {{ report.triage.routine_explained }}件
+{% if report.triage.person_type_totals %}- 人物判定内訳: {% for key, count in report.triage.person_type_totals.items() %}{{ key }}={{ count }}{% if not loop.last %}, {% endif %}{% endfor %}
+{% endif %}
 
 {% if report.failed_events %}
 ### 解析できなかった動画

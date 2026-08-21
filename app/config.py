@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from collections.abc import Mapping
@@ -33,6 +34,9 @@ VersionIdentifier = Annotated[
 _ENV_PATTERN = re.compile(
     r"\$\{(?P<name>[A-Za-z_][A-Za-z0-9_]*)(?::-(?P<default>[^}]*))?\}"
 )
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 class SettingsError(ValueError):
@@ -136,6 +140,34 @@ class RetrySettings(SettingsModel):
     max_attempts: int = Field(default=4, ge=1)
 
 
+class BatchSettings(SettingsModel):
+    """Deferred bulk submission for the image-heavy event observation stage.
+
+    A day of recordings is a natural batch: every clip is independent, and the
+    daily run already looks at yesterday. Trading same-minute latency for the
+    provider's bulk discount therefore costs the schedule nothing, so this is
+    on by default and can be turned off per run with ``--sync``.
+    """
+
+    enabled: bool = True
+    completion_window: Literal["24h"] = "24h"
+    poll_interval_sec: float = Field(default=30.0, gt=0, le=3600)
+    # Slightly beyond the completion window, so a batch that is finishing right
+    # at the deadline is still collected instead of abandoned one minute early.
+    max_wait_sec: float = Field(default=90_000.0, gt=0)
+    # Provider ceilings for a single batch; a day is split across as many
+    # batches as these require.
+    max_requests_per_batch: int = Field(default=50_000, ge=1, le=50_000)
+    max_input_bytes: int = Field(default=180_000_000, gt=0, le=200_000_000)
+    # Batch requests are billed at half the synchronous rate. This only scales
+    # the locally computed estimate; it never changes what is sent.
+    discount_ratio: float = Field(default=0.5, gt=0, le=1)
+    # The uploaded JSONL is this run's scratch payload and, at roughly a
+    # megabyte per analyzed second of video, by far the largest object the run
+    # leaves in the project's file storage. Result files are always kept.
+    delete_input_file: bool = True
+
+
 class PricingSettings(SettingsModel):
     input_per_million_tokens: float | None = Field(default=None, ge=0)
     output_per_million_tokens: float | None = Field(default=None, ge=0)
@@ -150,9 +182,12 @@ class GenAISettings(SettingsModel):
     max_inline_image_bytes: int = Field(default=13_000_000, gt=0)
     chunk_overlap_frames: int = Field(default=2, ge=0)
     request_timeout_sec: float = Field(default=180.0, gt=0)
-    max_output_tokens: int = Field(default=8192, gt=0)
+    # Triage responds for every event of the day in a single response, so the
+    # ceiling has to clear the busiest day, not the largest single event.
+    max_output_tokens: int = Field(default=32768, gt=0)
     retry: RetrySettings = Field(default_factory=RetrySettings)
     pricing: PricingSettings = Field(default_factory=PricingSettings)
+    batch: BatchSettings = Field(default_factory=BatchSettings)
 
     @field_validator("max_images_per_request", mode="before")
     @classmethod
@@ -175,12 +210,78 @@ class GenAISettings(SettingsModel):
 
 
 class PromptSettings(SettingsModel):
-    event: Path = Path("prompts/event_observation_v1.txt")
+    event: Path = Path("prompts/event_observation_v2.txt")
     event_synthesis: Path = Path("prompts/event_synthesis_v1.txt")
-    daily_report: Path = Path("prompts/daily_report_v1.txt")
-    event_version: VersionIdentifier = "event_observation_v1"
+    triage: Path = Path("prompts/triage_v2.txt")
+    daily_report: Path = Path("prompts/daily_report_v2.txt")
+    event_version: VersionIdentifier = "event_observation_v2"
     event_synthesis_version: VersionIdentifier = "event_synthesis_v1"
-    daily_report_version: VersionIdentifier = "daily_report_v1"
+    triage_version: VersionIdentifier = "triage_v2"
+    daily_report_version: VersionIdentifier = "daily_report_v2"
+
+
+class SceneSettings(SettingsModel):
+    """Free-text description of what this camera normally sees.
+
+    Every field is optional. Empty fields are omitted from prompts entirely so
+    an unconfigured deployment behaves exactly like the previous version.
+    The values describe a private household, so the real file is expected to
+    live outside version control (see ``AppSettings.scene_file``).
+    """
+
+    location: str = ""
+    camera_view: str = ""
+    household: str = ""
+    routine_patterns: tuple[NonEmpty, ...] = ()
+    known_vehicles: tuple[NonEmpty, ...] = ()
+    expected_visitors: tuple[NonEmpty, ...] = ()
+    notes: str = ""
+
+    @property
+    def is_configured(self) -> bool:
+        return bool(
+            self.location
+            or self.camera_view
+            or self.household
+            or self.routine_patterns
+            or self.known_vehicles
+            or self.expected_visitors
+            or self.notes
+        )
+
+    def prompt_payload(self) -> dict[str, Any]:
+        """Return only the populated fields, for embedding in a prompt."""
+
+        payload: dict[str, Any] = {}
+        for key in ("location", "camera_view", "household", "notes"):
+            value: str = getattr(self, key)
+            if value:
+                payload[key] = value
+        for key in ("routine_patterns", "known_vehicles", "expected_visitors"):
+            values: tuple[str, ...] = getattr(self, key)
+            if values:
+                payload[key] = list(values)
+        return payload
+
+
+class TriageSettings(SettingsModel):
+    """Text-only judgement pass that runs between events and the report."""
+
+    enabled: bool = True
+    # Items at or above this score are surfaced as "requires a look".
+    attention_score_threshold: int = Field(default=7, ge=0, le=10)
+    # A non-null ``notable`` promotes an item regardless of its score.
+    notable_always_attention: bool = True
+    # When a documented routine explains an event and nothing was flagged as
+    # notable, the score cannot exceed this. Ordinary household activity should
+    # not reach the attention threshold just because a detail went unresolved.
+    routine_explained_score_cap: int = Field(default=4, ge=0, le=10)
+    # Fold events belonging to one real-world occurrence into a single item, so
+    # one visit split across several clips is reported once.
+    group_related_events: bool = True
+    # Prior daily reports supplied as a baseline for novelty judgement.
+    history_days: int = Field(default=14, ge=0, le=90)
+    max_attention_items: int = Field(default=20, ge=1)
 
 
 class ReportSettings(SettingsModel):
@@ -225,6 +326,11 @@ class AppSettings(SettingsModel):
     frames: FrameSettings = Field(default_factory=FrameSettings)
     genai: GenAISettings = Field(default_factory=GenAISettings)
     prompts: PromptSettings = Field(default_factory=PromptSettings)
+    # Household details are sensitive, so the scene description is normally
+    # kept in a separate, git-ignored file referenced by ``scene_file``.
+    scene_file: Path | None = None
+    scene: SceneSettings = Field(default_factory=SceneSettings)
+    triage: TriageSettings = Field(default_factory=TriageSettings)
     report: ReportSettings = Field(default_factory=ReportSettings)
     processing: ProcessingSettings = Field(default_factory=ProcessingSettings)
 
@@ -279,6 +385,7 @@ _DIRECT_OVERRIDES: dict[str, tuple[str, ...]] = {
     "GENAI_MODEL": ("genai", "model"),
     "OPENAI_API_KEY": ("genai", "api_key"),
     "GENAI_MAX_IMAGES_PER_REQUEST": ("genai", "max_images_per_request"),
+    "GENAI_BATCH_ENABLED": ("genai", "batch", "enabled"),
 }
 
 
@@ -334,7 +441,67 @@ def load_settings(
         data = _substitute_env(raw, environment)
 
     _apply_env_overrides(data, environment)
+    _merge_scene_file(data, environment, config_path)
     return AppSettings.model_validate(data)
+
+
+def _merge_scene_file(
+    data: dict[str, Any],
+    environ: Mapping[str, str],
+    config_path: str | os.PathLike[str] | None,
+) -> None:
+    """Merge an external scene YAML under the ``scene`` key.
+
+    The scene description names a household and its habits, so it is kept in a
+    separate file that never enters version control or a container image. An
+    inline ``scene`` block still wins, field by field, so a deployment can
+    override a single value without copying the whole file.
+    """
+
+    reference = data.get("scene_file")
+    if reference is None:
+        return
+    if not isinstance(reference, (str, os.PathLike)):
+        raise SettingsError("scene_file must be a path")
+    source = Path(reference)
+    if not source.is_absolute() and config_path is not None:
+        # Resolve relative to the configuration file so a bind-mounted config
+        # directory keeps working without absolute container paths.
+        candidate = Path(config_path).parent / source
+        if candidate.exists():
+            source = candidate
+    if not source.exists():
+        # The scene file is git-ignored, so a fresh checkout will not have one.
+        # Failing here would block the whole run over an optional quality input,
+        # but staying silent would hide why judgement quality is poor.
+        LOGGER.warning(
+            "scene file %s not found; prompts will omit the scene description "
+            "and resident/visitor judgement will be markedly less reliable",
+            source,
+        )
+        return
+    try:
+        raw = yaml.safe_load(source.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise SettingsError(f"cannot read scene file {source}: {exc}") from exc
+    except yaml.YAMLError as exc:
+        raise SettingsError(f"invalid YAML in scene file {source}: {exc}") from exc
+    if raw is None:
+        raw = {}
+    if not isinstance(raw, dict):
+        raise SettingsError("the scene file root must be a mapping")
+    # A scene file may either be a bare mapping of scene fields or wrap them in
+    # a top-level ``scene`` key; accept both so the example file reads naturally.
+    if set(raw) == {"scene"}:
+        nested = raw["scene"]
+        if not isinstance(nested, dict):
+            raise SettingsError("the scene file 'scene' key must be a mapping")
+        raw = nested
+    resolved = _substitute_env(raw, environ)
+    inline = data.get("scene") or {}
+    if not isinstance(inline, dict):
+        raise SettingsError("the inline scene block must be a mapping")
+    data["scene"] = {**resolved, **inline}
 
 
 # Conventional aliases for integration code and external users.
@@ -345,6 +512,7 @@ load_config = load_settings
 
 __all__ = [
     "AppSettings",
+    "BatchSettings",
     "Config",
     "FrameSettings",
     "GenAISettings",
@@ -356,8 +524,10 @@ __all__ = [
     "ResolutionReductionSettings",
     "RetrySettings",
     "ScheduleSettings",
+    "SceneSettings",
     "Settings",
     "SettingsError",
+    "TriageSettings",
     "load_config",
     "load_settings",
 ]
