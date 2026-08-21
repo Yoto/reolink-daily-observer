@@ -907,6 +907,9 @@ def _cache_prompt_version(settings: AppSettings) -> str:
         "frame_extraction_version": FRAME_EXTRACTION_VERSION,
         "interval": settings.frames.interval_sec,
         "max_edge": settings.frames.max_long_edge_px,
+        "resolution_reduction": settings.frames.resolution_reduction.model_dump(
+            mode="json"
+        ),
         "jpeg_quality": settings.frames.jpeg_quality,
         "max_images": settings.genai.max_images_per_request,
         "max_inline_bytes": settings.genai.max_inline_image_bytes,

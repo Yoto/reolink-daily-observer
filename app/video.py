@@ -19,6 +19,7 @@ import math
 import os
 from pathlib import Path
 import re
+import statistics
 import subprocess
 import time
 from typing import Any, Sequence
@@ -29,8 +30,12 @@ _REOLINK_TIMESTAMP = re.compile(r"(?<!\d)(\d{14})(?!\d)")
 _ERROR_DETAIL_LIMIT = 2_000
 # Bump when extraction/filter semantics change so orchestration can invalidate
 # event artifacts even when the user-facing frame settings remain identical.
-FRAME_EXTRACTION_VERSION = "ffmpeg_fps_pts_eofpass_v2"
+FRAME_EXTRACTION_VERSION = "ffmpeg_fps_pts_eofpass_daylight_v3"
 LOGGER = logging.getLogger(__name__)
+_VIDEO_DECODER_WARNING_RE = re.compile(
+    r"\[(?:hevc|h26[45]|av1|vp9|mpeg4|mjpeg)\s+@",
+    re.IGNORECASE,
+)
 
 
 class VideoProcessingError(RuntimeError):
@@ -94,6 +99,30 @@ class ExtractedFrame:
     path: Path
     timestamp_sec: float
     index: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class DaylightFeatures:
+    """Small-frame statistics used only to select a safe extraction resolution."""
+
+    sampled_frames: int
+    median_saturation: float
+    dark_ratio: float
+    decoder_warning: bool = False
+
+    def is_daylike(
+        self,
+        *,
+        saturation_threshold: float,
+        dark_ratio_threshold: float,
+    ) -> bool:
+        """Return true only when both conservative daylight conditions hold."""
+
+        return (
+            not self.decoder_warning
+            and self.median_saturation > saturation_threshold
+            and self.dark_ratio < dark_ratio_threshold
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -350,6 +379,122 @@ def extract_frames(
     ]
 
 
+def measure_daylight_features(
+    video_path: str | os.PathLike[str],
+    *,
+    sample_frames: int = 5,
+    interval_sec: float = 1.0,
+    sample_width: int = 160,
+    sample_height: int = 90,
+    dark_luminance_threshold: int = 40,
+    ffmpeg_bin: str = "ffmpeg",
+    timeout_sec: float | None = None,
+) -> DaylightFeatures:
+    """Measure saturation and dark-pixel ratio from a few tiny leading frames."""
+
+    if isinstance(sample_frames, bool) or not isinstance(sample_frames, int):
+        raise TypeError("sample_frames must be an integer")
+    if sample_frames <= 0:
+        raise ValueError("sample_frames must be positive")
+    interval = _positive_finite_float(interval_sec, "interval_sec")
+    for name, value in (("sample_width", sample_width), ("sample_height", sample_height)):
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise TypeError(f"{name} must be an integer")
+        if value <= 0:
+            raise ValueError(f"{name} must be positive")
+    if (
+        isinstance(dark_luminance_threshold, bool)
+        or not isinstance(dark_luminance_threshold, int)
+        or not 0 <= dark_luminance_threshold <= 255
+    ):
+        raise ValueError("dark_luminance_threshold must be an integer from 0 to 255")
+
+    fps = 1.0 / interval
+    video_filter = (
+        f"fps={fps:.12g}:start_time=0:round=near:eof_action=pass,"
+        f"scale={sample_width}:{sample_height}:"
+        "force_original_aspect_ratio=decrease:flags=area,"
+        f"pad={sample_width}:{sample_height}:(ow-iw)/2:(oh-ih)/2:black"
+    )
+    command = [
+        ffmpeg_bin,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-nostdin",
+        "-i",
+        os.fspath(Path(video_path)),
+        "-map",
+        "0:v:0",
+        "-an",
+        "-vf",
+        video_filter,
+        "-frames:v",
+        str(sample_frames),
+        "-pix_fmt",
+        "rgb24",
+        "-f",
+        "rawvideo",
+        "pipe:1",
+    ]
+    result = _run_binary_command(
+        command,
+        operation="ffmpeg daylight sampling",
+        timeout_sec=timeout_sec,
+    )
+    frame_size = sample_width * sample_height * 3
+    produced = min(sample_frames, len(result.stdout) // frame_size)
+    if produced <= 0:
+        raise VideoProcessingError("ffmpeg daylight sampling", "no frames were produced")
+    if len(result.stdout) % frame_size:
+        LOGGER.warning(
+            "discarding incomplete daylight sample bytes file=%s bytes=%d",
+            Path(video_path).name,
+            len(result.stdout) % frame_size,
+        )
+
+    saturations: list[float] = []
+    dark_ratios: list[float] = []
+    payload = memoryview(result.stdout)
+    for index in range(produced):
+        start = index * frame_size
+        saturation, dark_ratio = _frame_daylight_features(
+            payload[start : start + frame_size],
+            dark_luminance_threshold=dark_luminance_threshold,
+        )
+        saturations.append(saturation)
+        dark_ratios.append(dark_ratio)
+
+    stderr = result.stderr.decode("utf-8", errors="replace")
+    return DaylightFeatures(
+        sampled_frames=produced,
+        median_saturation=float(statistics.median(saturations)),
+        dark_ratio=float(statistics.median(dark_ratios)),
+        decoder_warning=bool(_VIDEO_DECODER_WARNING_RE.search(stderr)),
+    )
+
+
+def _frame_daylight_features(
+    frame: memoryview,
+    *,
+    dark_luminance_threshold: int,
+) -> tuple[float, float]:
+    saturations: list[float] = []
+    dark_pixels = 0
+    pixel_count = len(frame) // 3
+    luminance_limit = dark_luminance_threshold * 256
+    for offset in range(0, pixel_count * 3, 3):
+        red = frame[offset]
+        green = frame[offset + 1]
+        blue = frame[offset + 2]
+        maximum = max(red, green, blue)
+        spread = maximum - min(red, green, blue)
+        saturations.append((spread * 255.0 / maximum) if maximum else 0.0)
+        if 77 * red + 150 * green + 29 * blue < luminance_limit:
+            dark_pixels += 1
+    return float(statistics.median(saturations)), dark_pixels / pixel_count
+
+
 def _run_command(
     command: Sequence[str],
     *,
@@ -386,6 +531,46 @@ def _run_command(
             "command returned a non-zero status",
             returncode=result.returncode,
             stderr=result.stderr,
+        )
+    return result
+
+
+def _run_binary_command(
+    command: Sequence[str],
+    *,
+    operation: str,
+    timeout_sec: float | None,
+) -> subprocess.CompletedProcess[bytes]:
+    try:
+        result = subprocess.run(
+            list(command),
+            capture_output=True,
+            text=False,
+            check=False,
+            timeout=timeout_sec,
+        )
+    except FileNotFoundError as exc:
+        raise VideoProcessingError(
+            operation,
+            f"executable not found ({command[0]})",
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        timeout_text = "configured timeout" if timeout_sec is None else f"{timeout_sec}s"
+        stderr = exc.stderr.decode(errors="replace") if isinstance(exc.stderr, bytes) else exc.stderr
+        raise VideoProcessingError(
+            operation,
+            f"timed out after {timeout_text}",
+            stderr=stderr,
+        ) from exc
+    except OSError as exc:
+        raise VideoProcessingError(operation, str(exc)) from exc
+
+    if result.returncode != 0:
+        raise VideoProcessingError(
+            operation,
+            "command returned a non-zero status",
+            returncode=result.returncode,
+            stderr=result.stderr.decode("utf-8", errors="replace"),
         )
     return result
 

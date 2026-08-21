@@ -19,6 +19,8 @@ build/
 *.egg-info/
 
 # Camera footage, generated reports, and persistent processing state
+analysis/
+.tmp-analysis-tools/
 data/
 input/
 output/

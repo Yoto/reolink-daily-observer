@@ -43,6 +43,7 @@ from app.video import (
     VideoMetadata,
     VideoProcessingError,
     extract_frames,
+    measure_daylight_features,
     parse_recording_time,
     probe_video,
     recording_end,
@@ -148,6 +149,8 @@ class EventAnalyzer:
                 video_path.name, self.settings.timezone
             )
 
+        max_long_edge_px = self._select_max_long_edge_px(video_path)
+
         temp_root = self.settings.paths.temp
         temp_root.mkdir(parents=True, exist_ok=True)
         workspace = Path(
@@ -158,7 +161,7 @@ class EventAnalyzer:
                 video_path,
                 workspace,
                 interval_sec=self.settings.frames.interval_sec,
-                max_long_edge_px=self.settings.frames.max_long_edge_px,
+                max_long_edge_px=max_long_edge_px,
                 jpeg_quality=self.settings.frames.jpeg_quality,
                 timeout_sec=self.settings.frames.ffmpeg_timeout_sec,
             )
@@ -171,10 +174,11 @@ class EventAnalyzer:
                     "source size or mtime changed during frame extraction",
                 )
             LOGGER.info(
-                "extracted frames event_id=%s duration_sec=%.3f frames=%d",
+                "extracted frames event_id=%s duration_sec=%.3f frames=%d max_edge=%d",
                 event_id,
                 metadata.duration_sec,
                 len(frames),
+                max_long_edge_px,
             )
             requests, frame_bytes = self._chunk_requests(
                 event_id=event_id,

@@ -257,6 +257,29 @@ def test_load_settings_fails_for_missing_placeholder(tmp_path) -> None:
         load_settings(config_path, environ={})
 
 
+def test_resolution_reduction_defaults_and_bounds() -> None:
+    settings = AppSettings()
+    reduction = settings.frames.resolution_reduction
+
+    assert reduction.enabled
+    assert reduction.daytime_max_long_edge_px == 768
+    assert reduction.saturation_threshold == 20
+    assert reduction.dark_ratio_threshold == 0.2
+
+    with pytest.raises(
+        ValidationError,
+        match="daytime_max_long_edge_px cannot exceed max_long_edge_px",
+    ):
+        AppSettings.model_validate(
+            {
+                "frames": {
+                    "max_long_edge_px": 640,
+                    "resolution_reduction": {"daytime_max_long_edge_px": 768},
+                }
+            }
+        )
+
+
 @pytest.mark.parametrize(
     "payload",
     [

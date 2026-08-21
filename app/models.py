@@ -230,6 +230,7 @@ class ProcessingMetadata(SchemaModel):
     analysis_signature: Identifier | None = None
     source_fingerprint: Identifier | None = None
     frame_interval_sec: float = Field(gt=0, allow_inf_nan=False)
+    frame_max_long_edge_px: int | None = Field(default=None, gt=0)
     frames_analyzed: int = Field(ge=0)
     chunk_count: int = Field(default=1, ge=1)
     processing_time_sec: float | None = Field(default=None, ge=0, allow_inf_nan=False)

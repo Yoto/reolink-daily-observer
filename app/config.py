@@ -17,6 +17,7 @@ from pydantic import (
     SecretStr,
     StringConstraints,
     field_validator,
+    model_validator,
 )
 
 
@@ -102,11 +103,37 @@ class InputSettings(SettingsModel):
         return normalized
 
 
+class ResolutionReductionSettings(SettingsModel):
+    enabled: bool = True
+    daytime_max_long_edge_px: int = Field(default=768, gt=0)
+    sample_frames: int = Field(default=5, gt=0, le=30)
+    interval_sec: float = Field(default=1.0, gt=0, le=10)
+    sample_width: int = Field(default=160, gt=0, le=1920)
+    sample_height: int = Field(default=90, gt=0, le=1080)
+    saturation_threshold: float = Field(default=20.0, ge=0, le=255)
+    dark_luminance_threshold: int = Field(default=40, ge=0, le=255)
+    dark_ratio_threshold: float = Field(default=0.20, ge=0, le=1)
+
+
 class FrameSettings(SettingsModel):
     interval_sec: float = Field(default=1.0, gt=0)
     max_long_edge_px: int = Field(default=1280, gt=0)
     jpeg_quality: int = Field(default=85, ge=1, le=100)
     ffmpeg_timeout_sec: float = Field(default=900.0, gt=0)
+    resolution_reduction: ResolutionReductionSettings = Field(
+        default_factory=ResolutionReductionSettings
+    )
+
+    @model_validator(mode="after")
+    def daytime_resolution_cannot_exceed_default(self) -> FrameSettings:
+        if (
+            self.resolution_reduction.daytime_max_long_edge_px
+            > self.max_long_edge_px
+        ):
+            raise ValueError(
+                "daytime_max_long_edge_px cannot exceed max_long_edge_px"
+            )
+        return self
 
 
 class RetrySettings(SettingsModel):
@@ -494,6 +521,7 @@ __all__ = [
     "ProcessingSettings",
     "PromptSettings",
     "ReportSettings",
+    "ResolutionReductionSettings",
     "RetrySettings",
     "ScheduleSettings",
     "SceneSettings",
