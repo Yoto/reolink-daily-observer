@@ -35,8 +35,12 @@ from app.models import (
     SCHEMA_VERSION,
     VideoMetadata,
 )
-from app.run_daily import main
-from app.run_daily import _process_day, _process_day_batched
+from app.run_daily import (
+    _cache_prompt_version,
+    _process_day,
+    _process_day_batched,
+    main,
+)
 from app.genai.mock import MockProvider
 from app.state import StateStore
 from app.video import (

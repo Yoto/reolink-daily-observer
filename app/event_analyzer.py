@@ -75,6 +75,7 @@ class PreparedEvent:
     source_fingerprint: str | None
     requests: tuple[BatchRequest[EventAnalysis], ...]
     frames_analyzed: int
+    frame_max_long_edge_px: int
     frame_bytes: int
     workspace: Path
     local_sec: float
@@ -200,6 +201,7 @@ class EventAnalyzer:
             source_fingerprint=source_fingerprint,
             requests=requests,
             frames_analyzed=len(frames),
+            frame_max_long_edge_px=max_long_edge_px,
             frame_bytes=frame_bytes,
             workspace=workspace,
             local_sec=time.perf_counter() - started,
@@ -229,6 +231,7 @@ class EventAnalyzer:
             analysis_signature=prepared.analysis_signature,
             source_fingerprint=prepared.source_fingerprint,
             frame_interval_sec=self.settings.frames.interval_sec,
+            frame_max_long_edge_px=prepared.frame_max_long_edge_px,
             frames_analyzed=prepared.frames_analyzed,
             chunk_count=prepared.chunk_count,
             # Local work only. A deferred batch shares one queue wait across
@@ -261,6 +264,51 @@ class EventAnalyzer:
             ),
             processing=processing,
         )
+
+    def _select_max_long_edge_px(self, video_path: Path) -> int:
+        high_resolution = self.settings.frames.max_long_edge_px
+        reduction = self.settings.frames.resolution_reduction
+        if not reduction.enabled:
+            return high_resolution
+
+        try:
+            features = measure_daylight_features(
+                video_path,
+                sample_frames=reduction.sample_frames,
+                interval_sec=reduction.interval_sec,
+                sample_width=reduction.sample_width,
+                sample_height=reduction.sample_height,
+                dark_luminance_threshold=reduction.dark_luminance_threshold,
+                timeout_sec=self.settings.frames.ffmpeg_timeout_sec,
+            )
+        except VideoProcessingError as exc:
+            LOGGER.warning(
+                "daylight sampling failed file=%s; using max_edge=%d: %s",
+                video_path.name,
+                high_resolution,
+                exc,
+            )
+            return high_resolution
+
+        selected = (
+            reduction.daytime_max_long_edge_px
+            if features.is_daylike(
+                saturation_threshold=reduction.saturation_threshold,
+                dark_ratio_threshold=reduction.dark_ratio_threshold,
+            )
+            else high_resolution
+        )
+        LOGGER.info(
+            "selected frame resolution file=%s max_edge=%d sampled_frames=%d "
+            "median_saturation=%.3f dark_ratio=%.4f decoder_warning=%s",
+            video_path.name,
+            selected,
+            features.sampled_frames,
+            features.median_saturation,
+            features.dark_ratio,
+            features.decoder_warning,
+        )
+        return selected
 
     def _chunk_requests(
         self,
