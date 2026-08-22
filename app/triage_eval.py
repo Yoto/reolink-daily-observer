@@ -184,7 +184,13 @@ def run_suite(
                 history=tuple(item.to_entry() for item in case.history),
             )
             failures = evaluate_case(case, outcome)
-            error = "triage request failed" if outcome.summary.failed else None
+            if outcome.summary.missing_count:
+                error = (
+                    "triage response omitted "
+                    f"{outcome.summary.missing_count} event(s)"
+                )
+            else:
+                error = "triage request failed" if outcome.summary.failed else None
             result = CaseResult(
                 id=case.id,
                 path=str(path),

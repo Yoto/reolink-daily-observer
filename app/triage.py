@@ -122,16 +122,22 @@ def run_triage(
         )
 
     triage_result = result.value
-    items, capped = _canonicalize_items(triage_result.items, events, settings)
+    items, capped, missing_ids = _canonicalize_items(
+        triage_result.items, events, settings
+    )
     grouped_items, folded = _group_occurrences(items, settings)
-    attention = _select_attention(grouped_items, settings)
+    attention = _select_attention(
+        grouped_items, settings, required_event_ids=missing_ids
+    )
+    missing = len(missing_ids)
     LOGGER.info(
-        "triage complete evaluated=%d attention=%d grouped=%d routine_score_capped=%d "
-        "threshold=%d elapsed_sec=%.2f",
-        len(items),
+        "triage complete evaluated=%d attention=%d grouped=%d "
+        "routine_score_capped=%d missing=%d threshold=%d elapsed_sec=%.2f",
+        len(items) - missing,
         len(attention),
         folded,
         capped,
+        missing,
         threshold,
         time.perf_counter() - started,
     )
@@ -144,25 +150,29 @@ def run_triage(
             provider=provider.name,
             model=provider.model,
             prompt_version=settings.prompts.triage_version,
-            evaluated_count=len(items),
+            evaluated_count=len(items) - missing,
             attention_count=len(attention),
+            missing_count=missing,
             grouped_count=folded,
             routine_explained_count=capped,
             score_threshold=threshold,
             person_type_totals=_person_type_totals(items),
             usage=result.usage,
-            failed=False,
+            failed=missing > 0,
         ),
     )
 
 
 def _canonicalize_items(
     items: Sequence[AttentionItem], events: Sequence[Event], settings: AppSettings
-) -> tuple[list[AttentionItem], int]:
+) -> tuple[list[AttentionItem], int, set[str]]:
     """Bind each judgement to a real event and restore trusted local fields.
 
-    Returns the canonical items and the number whose score was capped because a
-    documented routine explained them.
+    Returns the canonical items, the number whose score was capped because a
+    documented routine explained them, and the IDs missing from the model
+    response. Missing judgements become deterministic attention items so an
+    event can never silently disappear from the report. Their IDs are returned
+    so the normal display limit cannot hide them.
     """
 
     by_id = {event.event_id: event for event in events}
@@ -213,7 +223,23 @@ def _canonicalize_items(
             len(missing),
             ", ".join(sorted(missing)),
         )
-    return canonical, capped
+        for event_id in sorted(missing):
+            source = by_id[event_id]
+            canonical.append(
+                AttentionItem(
+                    event_id=event_id,
+                    assessment=(
+                        "triage応答にこのイベントの判定が含まれなかったため、"
+                        "内容を確認する必要がある。"
+                    ),
+                    person_type=PersonType.UNKNOWN,
+                    notable="triage判定結果が欠落したため未評価",
+                    anomaly_score=settings.triage.attention_score_threshold,
+                    recording_time=source.recording_start,
+                    source_file=source.source_file,
+                )
+            )
+    return canonical, capped, missing
 
 
 def _group_occurrences(
@@ -264,7 +290,10 @@ def _group_occurrences(
 
 
 def _select_attention(
-    items: Sequence[AttentionItem], settings: AppSettings
+    items: Sequence[AttentionItem],
+    settings: AppSettings,
+    *,
+    required_event_ids: set[str] | frozenset[str] = frozenset(),
 ) -> list[AttentionItem]:
     threshold = settings.triage.attention_score_threshold
     selected = [
@@ -280,7 +309,18 @@ def _select_attention(
             item.event_id,
         )
     )
-    return selected[: settings.triage.max_attention_items]
+    required = [item for item in selected if item.event_id in required_event_ids]
+    ordinary = [item for item in selected if item.event_id not in required_event_ids]
+    remaining = max(settings.triage.max_attention_items - len(required), 0)
+    result = required + ordinary[:remaining]
+    result.sort(
+        key=lambda item: (
+            -item.anomaly_score,
+            item.recording_time.timestamp() if item.recording_time else 0.0,
+            item.event_id,
+        )
+    )
+    return result
 
 
 def _person_type_totals(items: Sequence[AttentionItem]) -> dict[str, int]:

@@ -37,7 +37,8 @@
   <h1>防犯カメラ日報</h1>
   <p class="date">{{ report.date_ja }}</p>
 
-  {% if report.triage.failed %}<p class="banner failed"><strong>判定失敗</strong> 要確認の抽出ができませんでした。以下は判定なしの記録です。</p>
+  {% if report.triage.missing %}<p class="banner failed"><strong>一部判定欠落</strong> 未評価の{{ report.triage.missing }}件は、安全のため要確認に含めています。</p>
+  {% elif report.triage.failed %}<p class="banner failed"><strong>判定失敗</strong> 要確認の抽出ができませんでした。以下は判定なしの記録です。</p>
   {% elif report.triage.enabled and report.triage.evaluated %}<p class="banner {% if report.triage.attention %}flagged{% else %}clear{% endif %}"><strong>要確認 {{ report.triage.attention }}件</strong> / 判定済み {{ report.triage.evaluated }}件</p>
   {% elif report.triage.enabled %}<p class="banner failed"><strong>判定なし</strong> 要確認の判定は行われませんでした。</p>{% endif %}
 
@@ -66,6 +67,7 @@
     <div class="stat"><strong>{{ report.processing.unstable }}</strong>転送中保留</div>
     <div class="stat"><strong>{{ report.processing.failed }}</strong>失敗</div>
     <div class="stat"><strong>{{ report.triage.evaluated }}</strong>triage評価</div>
+    <div class="stat"><strong>{{ report.triage.missing }}</strong>triage未評価</div>
   </div>
   {% if report.triage.person_type_totals %}<p class="meta">人物判定内訳: {% for key, count in report.triage.person_type_totals.items() %}{{ key }}={{ count }}{% if not loop.last %} / {% endif %}{% endfor %}（抽出閾値 {{ report.triage.threshold }}）<br>同一の出来事としてまとめた件数: {{ report.triage.grouped }}件 / 普段の行動として説明がついた件数: {{ report.triage.routine_explained }}件</p>{% endif %}
   {% if report.failed_events %}<h3>解析できなかった動画</h3><table><thead><tr><th>録画時刻</th><th>元動画</th><th>エラー</th></tr></thead><tbody>{% for f in report.failed_events %}<tr><td>{% if f.recording_time %}{{ f.recording_time_display }}{% else %}不明{% endif %}</td><td>{{ f.source_file }}</td><td>{{ f.error }}</td></tr>{% endfor %}</tbody></table>{% endif %}

@@ -427,6 +427,7 @@ def _render_context(report: DailyReport) -> dict[str, object]:
         "enabled": triage["enabled"],
         "failed": triage["failed"],
         "evaluated": triage["evaluated_count"],
+        "missing": triage["missing_count"],
         "attention": triage["attention_count"],
         "grouped": triage["grouped_count"],
         "routine_explained": triage["routine_explained_count"],

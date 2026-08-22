@@ -320,6 +320,8 @@ def test_daily_cli_offline_e2e_and_second_run_reuses_events(
                 "genai:",
                 "  provider: mock",
                 "  model: mock-observer-v1",
+                "triage:",
+                "  enabled: false",
             ]
         ),
         encoding="utf-8",
@@ -727,6 +729,8 @@ def test_daily_cli_uses_the_batch_path_when_the_provider_offers_one(
                 "  model: batch-mock-v1",
                 "  batch:",
                 "    enabled: true",
+                "triage:",
+                "  enabled: false",
             ]
         ),
         encoding="utf-8",

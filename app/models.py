@@ -410,6 +410,9 @@ class TriageSummary(SchemaModel):
     prompt_version: Identifier | None = None
     evaluated_count: int = Field(default=0, ge=0)
     attention_count: int = Field(default=0, ge=0)
+    # Events absent from an otherwise valid provider response. They receive a
+    # deterministic attention item locally, but were not judged by the model.
+    missing_count: int = Field(default=0, ge=0)
     # Events folded into another item because they belong to one occurrence.
     grouped_count: int = Field(default=0, ge=0)
     # Events whose score was capped because a documented routine explains them.
@@ -421,8 +424,10 @@ class TriageSummary(SchemaModel):
 
     @model_validator(mode="after")
     def validate_counts(self) -> TriageSummary:
-        if self.attention_count > self.evaluated_count:
-            raise ValueError("attention_count cannot exceed evaluated_count")
+        if self.attention_count > self.evaluated_count + self.missing_count:
+            raise ValueError(
+                "attention_count cannot exceed evaluated_count plus missing_count"
+            )
         if any(count < 0 for count in self.person_type_totals.values()):
             raise ValueError("person type totals must be non-negative")
         return self
@@ -582,8 +587,12 @@ class DailyReport(SchemaModel):
             raise ValueError("attention_items must reference each event at most once")
         if self.triage_summary.attention_count != len(self.attention_items):
             raise ValueError("triage_summary.attention_count must match attention_items")
-        if self.triage_summary.evaluated_count > self.event_count:
-            raise ValueError("triage cannot evaluate more events than the day contains")
+        covered = (
+            self.triage_summary.evaluated_count
+            + self.triage_summary.missing_count
+        )
+        if covered > self.event_count:
+            raise ValueError("triage cannot cover more events than the day contains")
         return self
 
 
