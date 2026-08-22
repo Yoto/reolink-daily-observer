@@ -2,7 +2,9 @@
 
 {{ report.date_ja }}
 
-{% if report.triage.failed %}
+{% if report.triage.missing %}
+**一部の判定が欠落しました。** 未評価の{{ report.triage.missing }}件は、安全のため要確認に含めています。
+{% elif report.triage.failed %}
 **要確認の判定は失敗しました。** 以下は判定なしの記録です。
 {% elif report.triage.enabled and report.triage.evaluated %}
 **要確認 {{ report.triage.attention }}件** / 判定済み {{ report.triage.evaluated }}件
@@ -88,6 +90,7 @@
 - 未完了転送として保留: {{ report.processing.unstable }}件
 - 解析失敗: {{ report.processing.failed }}件
 - triage評価: {{ report.triage.evaluated }}件（閾値 {{ report.triage.threshold }} 以上または要注意記載を抽出）
+- triage未評価: {{ report.triage.missing }}件
 - 同一の出来事としてまとめた件数: {{ report.triage.grouped }}件
 - 普段の行動として説明がついた件数: {{ report.triage.routine_explained }}件
 {% if report.triage.person_type_totals %}- 人物判定内訳: {% for key, count in report.triage.person_type_totals.items() %}{{ key }}={{ count }}{% if not loop.last %}, {% endif %}{% endfor %}

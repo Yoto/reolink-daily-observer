@@ -77,11 +77,11 @@ genai:
 prompts:
   event: prompts/event_observation_v2.txt
   event_synthesis: prompts/event_synthesis_v1.txt
-  triage: prompts/triage_v2.txt
+  triage: prompts/triage_v3.txt
   daily_report: prompts/daily_report_v2.txt
   event_version: event_observation_v2
   event_synthesis_version: event_synthesis_v1
-  triage_version: triage_v2
+  triage_version: triage_v3
   daily_report_version: daily_report_v2
 
 # The scene description names a household and its habits, so it is kept out of

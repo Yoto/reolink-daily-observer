@@ -287,6 +287,8 @@ docker compose run --rm analyzer triage-eval run
 
 各ケースは `PASS` / `FAIL` で表示され、失敗時は `attention`、`person_type`、`routine_explanation`、`notable`、`anomaly_score` のどの期待値が外れたかを表示します。1ケースにつきtriageの同期リクエストを1回行い、全件成功なら終了コード`0`、期待値違反または処理失敗があれば`2`を返します。CIなどで結果を保存する場合は `--json-output /data/state/triage-eval-result.json` を付けてください。
 
+応答に一部のevent IDが含まれなかった場合もケース全体をFAILにします。通常の日次処理では欠落したeventを異常度7の「未評価」として必ず要確認へ追加し、`max_attention_items`の上限でも省略しません。日報と終了コードは部分失敗として扱うため、モデル応答の欠落が平常イベントとして黙って流れることはありません。
+
 ケースJSONは自己完結しており、通常はまず実際に誤判定したeventを`add`し、現在のpromptで`FAIL`することを確認してからtriageまたはsceneを修正し、再度`run`します。同じIDのケースを現在の同日event・履歴で作り直す場合は`--replace`を付けます。入力を対象eventだけに絞って小さな単体確認をしたい場合に限り`--isolated`を使用してください。
 
 `gpt-5.6-luna` はコストを抑えた既定値です。model ID、利用可否、料金はOpenAI側で変更され得るため、実行前に契約Projectで確認してください。料金見積りは `config/config.yaml` の単価による参考値で、請求画面が正です。

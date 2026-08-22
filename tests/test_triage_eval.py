@@ -205,3 +205,21 @@ def test_invalid_case_does_not_prevent_the_rest_of_the_suite(tmp_path: Path) -> 
     assert result.passed_count == 1
     broken = next(case for case in result.cases if case.id == "broken")
     assert broken.error
+
+
+def test_suite_fails_when_triage_omits_a_context_event(tmp_path: Path) -> None:
+    write_case(tmp_path / "case_newspaper-delivery.json")
+    case = load_case(tmp_path / "case_newspaper-delivery.json")
+    case.events.append(build_event("context-event"))
+    (tmp_path / "case_newspaper-delivery.json").write_text(
+        case.model_dump_json(indent=2), encoding="utf-8"
+    )
+
+    result = run_suite(
+        cases_directory=tmp_path,
+        settings=AppSettings(),
+        provider=TriageProvider(),
+    )
+
+    assert result.failed_count == 1
+    assert result.cases[0].error == "triage response omitted 1 event(s)"

@@ -212,11 +212,11 @@ class GenAISettings(SettingsModel):
 class PromptSettings(SettingsModel):
     event: Path = Path("prompts/event_observation_v2.txt")
     event_synthesis: Path = Path("prompts/event_synthesis_v1.txt")
-    triage: Path = Path("prompts/triage_v2.txt")
+    triage: Path = Path("prompts/triage_v3.txt")
     daily_report: Path = Path("prompts/daily_report_v2.txt")
     event_version: VersionIdentifier = "event_observation_v2"
     event_synthesis_version: VersionIdentifier = "event_synthesis_v1"
-    triage_version: VersionIdentifier = "triage_v2"
+    triage_version: VersionIdentifier = "triage_v3"
     daily_report_version: VersionIdentifier = "daily_report_v2"
 
 

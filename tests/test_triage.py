@@ -170,7 +170,7 @@ def test_disabling_notable_promotion_leaves_only_the_threshold() -> None:
     assert [item.event_id for item in outcome.attention_items] == ["e1"]
 
 
-def test_unknown_event_ids_are_dropped_and_missing_ones_are_tolerated() -> None:
+def test_unknown_event_ids_are_dropped_and_missing_ones_require_attention() -> None:
     events = [build_event("e0"), build_event("e1")]
     provider = ScriptedProvider(
         {
@@ -188,8 +188,17 @@ def test_unknown_event_ids_are_dropped_and_missing_ones_are_tolerated() -> None:
         provider=provider,
     )
 
-    assert [item.event_id for item in outcome.all_items] == ["e0"]
+    assert [item.event_id for item in outcome.all_items] == ["e0", "e1"]
+    assert [item.event_id for item in outcome.attention_items] == ["e0", "e1"]
+    missing = outcome.all_items[1]
+    assert missing.person_type == "unknown"
+    assert missing.routine_explanation is None
+    assert missing.notable == "triage判定結果が欠落したため未評価"
+    assert missing.anomaly_score == 7
+    assert missing.source_file == events[1].source_file
     assert outcome.summary.evaluated_count == 1
+    assert outcome.summary.missing_count == 1
+    assert outcome.summary.failed is True
 
 
 def test_triage_failure_is_recorded_without_losing_the_day() -> None:
@@ -204,6 +213,26 @@ def test_triage_failure_is_recorded_without_losing_the_day() -> None:
 
     assert outcome.summary.failed is True
     assert outcome.attention_items == []
+
+
+def test_missing_judgements_are_not_hidden_by_attention_limit() -> None:
+    events = [build_event(f"e{index}") for index in range(3)]
+    provider = ScriptedProvider({"TriageResult": {"items": [], "day_notes": []}})
+    settings = AppSettings.model_validate({"triage": {"max_attention_items": 1}})
+
+    outcome = run_triage(
+        target_date=date(2026, 8, 16),
+        events=events,
+        settings=settings,
+        provider=provider,
+    )
+
+    assert [item.event_id for item in outcome.attention_items] == [
+        "e0",
+        "e1",
+        "e2",
+    ]
+    assert outcome.summary.missing_count == 3
 
 
 def test_disabled_triage_makes_no_request() -> None:
@@ -257,6 +286,24 @@ def test_prompt_states_that_scene_is_missing_when_unconfigured() -> None:
     )
 
     assert "設定されていません" in provider.prompts[0]
+
+
+def test_default_prompt_uses_multi_signal_routine_matching() -> None:
+    provider = ScriptedProvider(
+        {"TriageResult": triage_payload(("e0", 3, None, "visitor"))}
+    )
+
+    run_triage(
+        target_date=date(2026, 8, 16),
+        events=[build_event("e0", hour=3)],
+        settings=AppSettings(),
+        provider=provider,
+    )
+
+    prompt = provider.prompts[0]
+    assert "複数の観察事実" in prompt
+    assert "時刻の一致だけでは routine と判断しない" in prompt
+    assert "物体が新聞と明瞭に識別されていなくても" in prompt
 
 
 def test_scene_file_is_merged_and_inline_values_win(tmp_path: Path) -> None:
