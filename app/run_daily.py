@@ -27,9 +27,23 @@ from app.event_analyzer import (
 from app.genai import create_provider
 from app.genai.base import BatchOutcome, BatchRequest, GenAIProvider, failure_usage
 from app.io_utils import atomic_write_json
-from app.models import APIUsage, DailyReport, Event, FailedEvent, SCHEMA_VERSION
+from app.models import (
+    APIUsage,
+    DailyReport,
+    Event,
+    FailedEvent,
+    PersonType,
+    SCHEMA_VERSION,
+)
 from app.state import CacheKey, FileFingerprint, ProcessingClaim, StateStore
 from app.triage import HistoryEntry, TriageOutcome, run_triage
+from app.triage_eval import (
+    create_case_from_event,
+    default_cases_directory,
+    discover_cases,
+    run_suite,
+    write_suite_result,
+)
 from app.video import (
     FRAME_EXTRACTION_VERSION,
     FileSnapshot,
@@ -75,6 +89,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if arguments and arguments[0] == "analyze-video":
             return _single_command(arguments[1:])
+        if arguments and arguments[0] == "triage-eval":
+            return _triage_eval_command(arguments[1:])
         return _daily_command(arguments)
     except KeyboardInterrupt:
         LOGGER.error("interrupted")
@@ -270,6 +286,102 @@ def _single_command(argv: Sequence[str]) -> int:
         return 0
     finally:
         provider.close()
+
+
+def _triage_eval_command(argv: Sequence[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="reolink-daily triage-eval",
+        description="Capture and run private regression cases for text-only triage.",
+    )
+    commands = parser.add_subparsers(dest="command", required=True)
+
+    run_parser = commands.add_parser(
+        "run", help="run every saved case against the current scene and prompt"
+    )
+    run_parser.add_argument("--config", type=Path, help="YAML configuration path")
+    run_parser.add_argument(
+        "--cases", type=Path, help="case directory (default: <paths.state>/triage-eval)"
+    )
+    run_parser.add_argument(
+        "--json-output", type=Path, help="also write the machine-readable suite result"
+    )
+
+    add_parser = commands.add_parser(
+        "add", help="copy one existing event JSON into a new private case"
+    )
+    add_parser.add_argument("--config", type=Path, help="YAML configuration path")
+    add_parser.add_argument("--event", type=Path, required=True)
+    add_parser.add_argument("--id", required=True, dest="case_id")
+    add_parser.add_argument("--description", required=True)
+    add_parser.add_argument("--frequency", dest="observed_frequency")
+    add_parser.add_argument("--date", type=_iso_date)
+    attention = add_parser.add_mutually_exclusive_group(required=True)
+    attention.add_argument("--attention", action="store_true", dest="attention")
+    attention.add_argument("--no-attention", action="store_false", dest="attention")
+    add_parser.add_argument(
+        "--person-type", choices=[item.value for item in PersonType]
+    )
+    add_parser.add_argument(
+        "--routine", choices=("present", "absent"), dest="routine_explanation"
+    )
+    add_parser.add_argument("--notable", choices=("present", "absent"))
+    add_parser.add_argument("--score-min", type=int, dest="anomaly_score_min")
+    add_parser.add_argument("--score-max", type=int, dest="anomaly_score_max")
+    add_parser.add_argument(
+        "--cases", type=Path, help="case directory (default: <paths.state>/triage-eval)"
+    )
+
+    args = parser.parse_args(argv)
+    settings = _settings(args.config)
+    cases_directory = args.cases or default_cases_directory(settings)
+    if args.command == "add":
+        output = create_case_from_event(
+            event_path=args.event.resolve(strict=True),
+            output_directory=cases_directory,
+            case_id=args.case_id,
+            description=args.description,
+            attention=args.attention,
+            person_type=args.person_type,
+            routine_explanation=args.routine_explanation,
+            notable=args.notable,
+            anomaly_score_min=args.anomaly_score_min,
+            anomaly_score_max=args.anomaly_score_max,
+            observed_frequency=args.observed_frequency,
+            target_date=args.date,
+        )
+        print(output)
+        return 0
+
+    paths = discover_cases(cases_directory)
+    if not paths:
+        print(f"no triage eval cases found in {cases_directory}", file=sys.stderr)
+        return 2
+    provider = create_provider(settings)
+    try:
+        result = run_suite(
+            cases_directory=cases_directory,
+            settings=settings,
+            provider=provider,
+        )
+    finally:
+        provider.close()
+    for case in result.cases:
+        print(f"{'PASS' if case.passed else 'FAIL'} {case.id}")
+        if case.error:
+            print(f"  error: {case.error}")
+        for failure in case.failures:
+            print(
+                f"  {failure.event_id}.{failure.field}: "
+                f"expected={failure.expected!r} actual={failure.actual!r}"
+            )
+    print(
+        f"triage eval: {result.passed_count}/{result.case_count} passed; "
+        f"requests={result.usage.request_count} "
+        f"estimated_cost={result.usage.estimated_cost}"
+    )
+    if args.json_output:
+        write_suite_result(args.json_output, result)
+    return 0 if result.failed_count == 0 else 2
 
 
 def _process_day(

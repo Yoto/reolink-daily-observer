@@ -257,6 +257,37 @@ processing:
 
 `enabled: false` にすると triage を実行せず、要確認セクションのない従来どおりの日報になります。
 
+## triageの回帰評価
+
+triage promptやsceneを変更するたびに過去のevent JSONを手作業でコピー・比較しないよう、テキストだけの小さな回帰評価を実行できます。fixtureは既定で `/data/state/triage-eval` に保存されます。映像は含みませんが、家庭で観察された行動を含むため、公開リポジトリではなく永続state領域に置く設計です。
+
+fixtureへ取り込む主な対象は、**正常だと分かっているのに月1回以上の頻度で要確認へ上がる事象**です。それより稀な事象は未知性を保つためfixture化せず、要確認に残します。高頻度でも正常と確認できていない事象を抑制ケースにしないでください。
+
+既存event JSONから1ケースを追加します。次の例は、毎日の新聞配達をvisitorとして説明し、要確認に出さないことを期待します。`add` はAPIを呼びません。
+
+```powershell
+docker compose run --rm analyzer triage-eval add `
+  --event /data/output/2026-08-21/events/event_EXAMPLE.json `
+  --id newspaper-delivery-001 `
+  --description "早朝の定型的な新聞配達" `
+  --frequency daily `
+  --no-attention `
+  --person-type visitor `
+  --routine present `
+  --notable absent `
+  --score-max 4
+```
+
+現在のconfig、scene、triage promptで全ケースを再評価します。
+
+```powershell
+docker compose run --rm analyzer triage-eval run
+```
+
+各ケースは `PASS` / `FAIL` で表示され、失敗時は `attention`、`person_type`、`routine_explanation`、`notable`、`anomaly_score` のどの期待値が外れたかを表示します。1ケースにつきtriageの同期リクエストを1回行い、全件成功なら終了コード`0`、期待値違反または処理失敗があれば`2`を返します。CIなどで結果を保存する場合は `--json-output /data/state/triage-eval-result.json` を付けてください。
+
+ケースJSONは自己完結しており、必要なら複数eventや履歴を直接追加できます。通常はまず実際に誤判定したeventを`add`し、現在のpromptで`FAIL`することを確認してからtriageまたはsceneを修正し、再度`run`します。
+
 `gpt-5.6-luna` はコストを抑えた既定値です。model ID、利用可否、料金はOpenAI側で変更され得るため、実行前に契約Projectで確認してください。料金見積りは `config/config.yaml` の単価による参考値で、請求画面が正です。
 
 ## 定期実行
