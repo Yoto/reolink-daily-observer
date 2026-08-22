@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from datetime import date as Date
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Sequence
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
@@ -40,6 +40,15 @@ class HistoryFixture(EvalModel):
     recurring_patterns: tuple[NonEmpty, ...] = ()
     attention_notes: tuple[NonEmpty, ...] = ()
 
+    @classmethod
+    def from_entry(cls, entry: HistoryEntry) -> HistoryFixture:
+        return cls(
+            date=entry.date,
+            overview=entry.overview,
+            recurring_patterns=entry.recurring_patterns,
+            attention_notes=entry.attention_notes,
+        )
+
     def to_entry(self) -> HistoryEntry:
         return HistoryEntry(
             date=self.date,
@@ -54,12 +63,20 @@ class EventExpectation(EvalModel):
     attention: bool
     person_type: PersonType | None = None
     routine_explanation: Presence | None = None
+    routine_explanation_contains: NonEmpty | None = None
     notable: Presence | None = None
     anomaly_score_min: int | None = Field(default=None, ge=0, le=10)
     anomaly_score_max: int | None = Field(default=None, ge=0, le=10)
 
     @model_validator(mode="after")
     def score_range_is_ordered(self) -> EventExpectation:
+        if (
+            self.routine_explanation == "absent"
+            and self.routine_explanation_contains is not None
+        ):
+            raise ValueError(
+                "routine_explanation_contains conflicts with an absent routine"
+            )
         if (
             self.anomaly_score_min is not None
             and self.anomaly_score_max is not None
@@ -242,6 +259,18 @@ def evaluate_case(
                 expected.routine_explanation,
                 item.routine_explanation,
             )
+        if expected.routine_explanation_contains is not None and (
+            not item.routine_explanation
+            or expected.routine_explanation_contains not in item.routine_explanation
+        ):
+            failures.append(
+                ExpectationFailure(
+                    event_id=expected.event_id,
+                    field="routine_explanation_contains",
+                    expected=expected.routine_explanation_contains,
+                    actual=item.routine_explanation,
+                )
+            )
         if expected.notable is not None:
             _compare_presence(
                 failures,
@@ -286,11 +315,15 @@ def create_case_from_event(
     attention: bool,
     person_type: PersonType | None = None,
     routine_explanation: Presence | None = None,
+    routine_explanation_contains: str | None = None,
     notable: Presence | None = None,
     anomaly_score_min: int | None = None,
     anomaly_score_max: int | None = None,
     observed_frequency: str | None = None,
     target_date: Date | None = None,
+    include_sibling_events: bool = True,
+    history: Sequence[HistoryEntry] = (),
+    replace: bool = False,
 ) -> Path:
     event = Event.model_validate_json(event_path.read_text(encoding="utf-8"))
     resolved_date = target_date or (
@@ -303,13 +336,15 @@ def create_case_from_event(
         description=description,
         target_date=resolved_date,
         observed_frequency=observed_frequency,
-        events=[event],
+        events=_case_events(event_path, event, include_sibling_events),
+        history=[HistoryFixture.from_entry(entry) for entry in history],
         expectations=[
             EventExpectation(
                 event_id=event.event_id,
                 attention=attention,
                 person_type=person_type,
                 routine_explanation=routine_explanation,
+                routine_explanation_contains=routine_explanation_contains,
                 notable=notable,
                 anomaly_score_min=anomaly_score_min,
                 anomaly_score_max=anomaly_score_max,
@@ -317,10 +352,28 @@ def create_case_from_event(
         ],
     )
     output = output_directory / f"case_{case.id}.json"
-    if output.exists():
+    if output.exists() and not replace:
         raise FileExistsError(f"triage eval case already exists: {output}")
     atomic_write_json(output, case)
     return output
+
+
+def _case_events(
+    event_path: Path, target: Event, include_sibling_events: bool
+) -> list[Event]:
+    by_id = {target.event_id: target}
+    if include_sibling_events:
+        for path in sorted(event_path.parent.glob("event_*.json")):
+            candidate = Event.model_validate_json(path.read_text(encoding="utf-8"))
+            by_id[candidate.event_id] = candidate
+    return sorted(
+        by_id.values(),
+        key=lambda event: (
+            event.recording_start is None,
+            event.recording_start.isoformat() if event.recording_start else "",
+            event.event_id,
+        ),
+    )
 
 
 def _compare(

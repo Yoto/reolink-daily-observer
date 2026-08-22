@@ -16,6 +16,7 @@ from app.models import (
     TriageResult,
     VideoMetadata,
 )
+from app.triage import HistoryEntry
 from app.triage_eval import (
     EventExpectation,
     TriageEvalCase,
@@ -105,6 +106,7 @@ def write_case(path: Path) -> None:
                 attention=False,
                 person_type="visitor",
                 routine_explanation="present",
+                routine_explanation_contains="新聞配達",
                 notable="absent",
                 anomaly_score_max=4,
             )
@@ -116,6 +118,9 @@ def write_case(path: Path) -> None:
 def test_case_created_from_an_event_is_self_contained(tmp_path: Path) -> None:
     event_path = tmp_path / "event.json"
     event_path.write_text(build_event().model_dump_json(indent=2), encoding="utf-8")
+    (tmp_path / "event_other.json").write_text(
+        build_event("other-event").model_dump_json(indent=2), encoding="utf-8"
+    )
 
     output = create_case_from_event(
         event_path=event_path,
@@ -125,15 +130,27 @@ def test_case_created_from_an_event_is_self_contained(tmp_path: Path) -> None:
         attention=False,
         person_type="visitor",
         routine_explanation="present",
+        routine_explanation_contains="新聞配達",
         notable="absent",
         anomaly_score_max=4,
         observed_frequency="daily",
+        history=[
+            HistoryEntry(
+                date="2026-08-15",
+                overview="前日にも同じ時間帯の訪問があった。",
+            )
+        ],
     )
 
     loaded = load_case(output)
-    assert loaded.events == [build_event()]
+    assert {event.event_id for event in loaded.events} == {
+        "newspaper-1",
+        "other-event",
+    }
     assert loaded.expectations[0].attention is False
+    assert loaded.expectations[0].routine_explanation_contains == "新聞配達"
     assert loaded.observed_frequency == "daily"
+    assert loaded.history[0].date == "2026-08-15"
 
 
 def test_suite_reuses_triage_and_applies_local_score_cap(tmp_path: Path) -> None:
@@ -166,6 +183,7 @@ def test_suite_reports_each_expectation_mismatch(tmp_path: Path) -> None:
     assert fields == {
         "attention",
         "routine_explanation",
+        "routine_explanation_contains",
         "notable",
         "anomaly_score_max",
     }
