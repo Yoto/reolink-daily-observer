@@ -263,7 +263,7 @@ triage promptやsceneを変更するたびに過去のevent JSONを手作業で�
 
 fixtureへ取り込む主な対象は、**正常だと分かっているのに月1回以上の頻度で要確認へ上がる事象**です。それより稀な事象は未知性を保つためfixture化せず、要確認に残します。高頻度でも正常と確認できていない事象を抑制ケースにしないでください。
 
-既存event JSONから1ケースを追加します。次の例は、毎日の新聞配達をvisitorとして説明し、要確認に出さないことを期待します。`add` はAPIを呼びません。
+既存event JSONから1ケースを追加します。対象eventと同じディレクトリにある同日event、および当時の日報履歴も自動的にコピーするため、本番の日次triageに近い入力を再現できます。次の例は、毎日の新聞配達をvisitorとして明示的に説明し、要確認に出さないことを期待します。`add` はAPIを呼びません。
 
 ```powershell
 docker compose run --rm analyzer triage-eval add `
@@ -274,6 +274,7 @@ docker compose run --rm analyzer triage-eval add `
   --no-attention `
   --person-type visitor `
   --routine present `
+  --routine-contains "新聞配達" `
   --notable absent `
   --score-max 4
 ```
@@ -286,7 +287,7 @@ docker compose run --rm analyzer triage-eval run
 
 各ケースは `PASS` / `FAIL` で表示され、失敗時は `attention`、`person_type`、`routine_explanation`、`notable`、`anomaly_score` のどの期待値が外れたかを表示します。1ケースにつきtriageの同期リクエストを1回行い、全件成功なら終了コード`0`、期待値違反または処理失敗があれば`2`を返します。CIなどで結果を保存する場合は `--json-output /data/state/triage-eval-result.json` を付けてください。
 
-ケースJSONは自己完結しており、必要なら複数eventや履歴を直接追加できます。通常はまず実際に誤判定したeventを`add`し、現在のpromptで`FAIL`することを確認してからtriageまたはsceneを修正し、再度`run`します。
+ケースJSONは自己完結しており、通常はまず実際に誤判定したeventを`add`し、現在のpromptで`FAIL`することを確認してからtriageまたはsceneを修正し、再度`run`します。同じIDのケースを現在の同日event・履歴で作り直す場合は`--replace`を付けます。入力を対象eventだけに絞って小さな単体確認をしたい場合に限り`--isolated`を使用してください。
 
 `gpt-5.6-luna` はコストを抑えた既定値です。model ID、利用可否、料金はOpenAI側で変更され得るため、実行前に契約Projectで確認してください。料金見積りは `config/config.yaml` の単価による参考値で、請求画面が正です。
 

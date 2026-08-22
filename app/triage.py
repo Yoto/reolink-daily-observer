@@ -126,7 +126,7 @@ def run_triage(
     grouped_items, folded = _group_occurrences(items, settings)
     attention = _select_attention(grouped_items, settings)
     LOGGER.info(
-        "triage complete evaluated=%d attention=%d grouped=%d routine_explained=%d "
+        "triage complete evaluated=%d attention=%d grouped=%d routine_score_capped=%d "
         "threshold=%d elapsed_sec=%.2f",
         len(items),
         len(attention),

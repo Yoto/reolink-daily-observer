@@ -324,30 +324,62 @@ def _triage_eval_command(argv: Sequence[str]) -> int:
     add_parser.add_argument(
         "--routine", choices=("present", "absent"), dest="routine_explanation"
     )
+    add_parser.add_argument(
+        "--routine-contains",
+        help="require this text in the produced routine explanation",
+    )
     add_parser.add_argument("--notable", choices=("present", "absent"))
     add_parser.add_argument("--score-min", type=int, dest="anomaly_score_min")
     add_parser.add_argument("--score-max", type=int, dest="anomaly_score_max")
     add_parser.add_argument(
         "--cases", type=Path, help="case directory (default: <paths.state>/triage-eval)"
     )
+    add_parser.add_argument(
+        "--isolated",
+        action="store_true",
+        help="capture only the target event, without its day or report history",
+    )
+    add_parser.add_argument(
+        "--replace", action="store_true", help="replace an existing case with this id"
+    )
 
     args = parser.parse_args(argv)
     settings = _settings(args.config)
     cases_directory = args.cases or default_cases_directory(settings)
     if args.command == "add":
+        event_path = args.event.resolve(strict=True)
+        target_event = Event.model_validate_json(event_path.read_text(encoding="utf-8"))
+        case_date = args.date or (
+            target_event.recording_start.date()
+            if target_event.recording_start is not None
+            else None
+        )
+        history = (
+            _load_history(
+                output_root=settings.paths.output,
+                target_date=case_date,
+                days=settings.triage.history_days,
+            )
+            if not args.isolated and case_date is not None
+            else ()
+        )
         output = create_case_from_event(
-            event_path=args.event.resolve(strict=True),
+            event_path=event_path,
             output_directory=cases_directory,
             case_id=args.case_id,
             description=args.description,
             attention=args.attention,
             person_type=args.person_type,
             routine_explanation=args.routine_explanation,
+            routine_explanation_contains=args.routine_contains,
             notable=args.notable,
             anomaly_score_min=args.anomaly_score_min,
             anomaly_score_max=args.anomaly_score_max,
             observed_frequency=args.observed_frequency,
             target_date=args.date,
+            include_sibling_events=not args.isolated,
+            history=history,
+            replace=args.replace,
         )
         print(output)
         return 0
