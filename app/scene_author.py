@@ -400,11 +400,16 @@ def _settings_without_scene(explicit_path: Path | None) -> AppSettings:
             raw = {}
         if not isinstance(raw, dict):
             raise SettingsError("the YAML document root must be a mapping")
+        # Remove scene data before environment substitution. The helper must not
+        # resolve secrets or other private values embedded in inline scene data.
+        raw = dict(raw)
+        raw.pop("scene_file", None)
+        raw.pop("scene", None)
         data = _substitute_env(raw, environment)
 
     _apply_env_overrides(data, environment)
-    # Scrub both external references and legacy inline scene content after env
-    # overrides so no scene data survives into settings or provider prompts.
+    # Generic ANALYZER_SCENE_* overrides are applied above with all other runtime
+    # settings, then removed here before validation/provider construction.
     data.pop("scene_file", None)
     data.pop("scene", None)
     return AppSettings.model_validate(data)
