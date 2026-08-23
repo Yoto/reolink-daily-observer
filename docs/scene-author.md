@@ -22,7 +22,7 @@ docker compose run --rm analyzer scene-author suggest "新聞配達" `
   /data/input/2026/08/22/example3.mp4
 ```
 
-既定では各動画から最大12フレームを時間方向に分散して抽出します。変更する場合:
+既定では各動画から最大24フレームを時間方向に分散して抽出します。通常運用より精度優先の補助処理なので、`frames.max_long_edge_px` の解像度を使い、昼間向けの解像度削減は適用しません。変更する場合:
 
 ```powershell
 docker compose run --rm analyzer scene-author suggest "新聞配達" `
