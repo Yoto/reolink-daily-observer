@@ -89,8 +89,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     suggest.add_argument(
         "--frames-per-video",
         type=int,
-        default=12,
-        help="maximum sampled frames sent for each clip (default: 12)",
+        default=24,
+        help="maximum sampled frames sent for each clip (default: 24)",
     )
     suggest.add_argument(
         "--max-long-edge-px",
@@ -146,7 +146,7 @@ def run_scene_author(
     videos: Sequence[Path],
     settings: AppSettings,
     provider: GenAIProvider,
-    frames_per_video: int = 12,
+    frames_per_video: int = 24,
     max_long_edge_px: int | None = None,
 ) -> SceneAuthorResult:
     clean_label = " ".join(label.split())
