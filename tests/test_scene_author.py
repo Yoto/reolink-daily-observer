@@ -93,7 +93,7 @@ def test_settings_without_scene_never_reads_scene_file(
                 "timezone: Asia/Tokyo",
                 "scene_file: scene.yaml",
                 "scene:",
-                "  household: inline-secret",
+                "  household: ${SCENE_ONLY_SECRET}",
                 "genai:",
                 "  provider: mock",
                 "  model: mock-scene-author",
