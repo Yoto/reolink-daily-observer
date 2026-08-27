@@ -1,3 +1,6 @@
+Failed to create stream fd: Operation not permitted
+Failed to create stream fd: Operation not permitted
+Failed to create stream fd: Operation not permitted
 """Typed YAML configuration with explicit environment-variable overrides."""
 
 from __future__ import annotations
@@ -281,6 +284,8 @@ class TriageSettings(SettingsModel):
     group_related_events: bool = True
     # Prior daily reports supplied as a baseline for novelty judgement.
     history_days: int = Field(default=14, ge=0, le=90)
+    # Retry only judgements omitted from an otherwise schema-valid response.
+    missing_retry_attempts: int = Field(default=1, ge=0, le=3)
     max_attention_items: int = Field(default=20, ge=1)
 
 
