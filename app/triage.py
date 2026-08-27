@@ -84,17 +84,12 @@ def run_triage(
         )
 
     prompt_template = _read_relative(settings.prompts.triage)
-    prompt = prompt_template.format(
-        date=target_date.isoformat(),
-        timezone=settings.timezone,
-        event_count=len(events),
-        scene_json=_scene_block(settings),
-        history_json=_history_block(history),
-        events_json=json.dumps(
-            [_triage_event_payload(event) for event in events],
-            ensure_ascii=False,
-            indent=2,
-        ),
+    prompt = _triage_prompt(
+        prompt_template=prompt_template,
+        target_date=target_date,
+        events=events,
+        settings=settings,
+        history=history,
     )
 
     started = time.perf_counter()
@@ -122,6 +117,52 @@ def run_triage(
         )
 
     triage_result = result.value
+    usage = result.usage
+    missing_before_retry = _missing_event_ids(triage_result.items, events)
+    for attempt in range(1, settings.triage.missing_retry_attempts + 1):
+        if not missing_before_retry:
+            break
+        retry_events = [
+            event for event in events if event.event_id in missing_before_retry
+        ]
+        LOGGER.warning(
+            "retrying %d missing triage judgement(s) attempt=%d/%d",
+            len(retry_events),
+            attempt,
+            settings.triage.missing_retry_attempts,
+        )
+        retry_prompt = _triage_prompt(
+            prompt_template=prompt_template,
+            target_date=target_date,
+            events=retry_events,
+            settings=settings,
+            history=history,
+        )
+        try:
+            retry_result = provider.generate_structured(
+                prompt=retry_prompt, response_model=TriageResult
+            )
+        except Exception as exc:  # noqa: BLE001 - preserve the first response
+            LOGGER.exception(
+                "missing triage judgement retry failed attempt=%d/%d",
+                attempt,
+                settings.triage.missing_retry_attempts,
+            )
+            failed_usage = getattr(exc, "usage", APIUsage())
+            if isinstance(failed_usage, APIUsage):
+                usage = usage.plus(failed_usage)
+            break
+        usage = usage.plus(retry_result.usage)
+        triage_result = triage_result.model_copy(
+            update={
+                "items": [*triage_result.items, *retry_result.value.items],
+                "day_notes": [
+                    *triage_result.day_notes,
+                    *retry_result.value.day_notes,
+                ],
+            }
+        )
+        missing_before_retry = _missing_event_ids(triage_result.items, events)
     items, capped, missing_ids = _canonicalize_items(
         triage_result.items, events, settings
     )
@@ -157,10 +198,40 @@ def run_triage(
             routine_explained_count=capped,
             score_threshold=threshold,
             person_type_totals=_person_type_totals(items),
-            usage=result.usage,
+            usage=usage,
             failed=missing > 0,
         ),
     )
+
+
+def _triage_prompt(
+    *,
+    prompt_template: str,
+    target_date: Date,
+    events: Sequence[Event],
+    settings: AppSettings,
+    history: Sequence[HistoryEntry],
+) -> str:
+    return prompt_template.format(
+        date=target_date.isoformat(),
+        timezone=settings.timezone,
+        event_count=len(events),
+        scene_json=_scene_block(settings),
+        history_json=_history_block(history),
+        events_json=json.dumps(
+            [_triage_event_payload(event) for event in events],
+            ensure_ascii=False,
+            indent=2,
+        ),
+    )
+
+
+def _missing_event_ids(
+    items: Sequence[AttentionItem], events: Sequence[Event]
+) -> set[str]:
+    expected = {event.event_id for event in events}
+    returned = {item.event_id for item in items if item.event_id in expected}
+    return expected - returned
 
 
 def _canonicalize_items(

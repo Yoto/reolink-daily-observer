@@ -105,6 +105,8 @@ triage:
   group_related_events: true
   # Prior daily reports supplied as a baseline for novelty judgement.
   history_days: 14
+  # Retry only events omitted from a schema-valid triage response.
+  missing_retry_attempts: 1
   max_attention_items: 20
 
 report:
