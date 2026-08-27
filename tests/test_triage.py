@@ -1,3 +1,6 @@
+Failed to create stream fd: Operation not permitted
+Failed to create stream fd: Operation not permitted
+Failed to create stream fd: Operation not permitted
 from __future__ import annotations
 
 import json
@@ -67,6 +70,10 @@ class ScriptedProvider(GenAIProvider):
     ) -> StructuredResult:
         self.prompts.append(prompt)
         payload = self._responses.get(response_model.__name__)
+        if isinstance(payload, list):
+            if not payload:
+                raise AssertionError(f"no scripted responses left for {response_model.__name__}")
+            payload = payload.pop(0)
         if payload is None:
             raise AssertionError(f"no scripted response for {response_model.__name__}")
         if isinstance(payload, Exception):
@@ -199,6 +206,38 @@ def test_unknown_event_ids_are_dropped_and_missing_ones_require_attention() -> N
     assert outcome.summary.evaluated_count == 1
     assert outcome.summary.missing_count == 1
     assert outcome.summary.failed is True
+
+
+def test_missing_judgements_are_retried_and_merged() -> None:
+    events = [build_event("e0"), build_event("e1"), build_event("e2")]
+    provider = ScriptedProvider(
+        {
+            "TriageResult": [
+                triage_payload(
+                    ("e0", 1, None, "resident"),
+                    ("e2", 2, None, "resident"),
+                ),
+                triage_payload(("e1", 8, None, "unknown")),
+            ]
+        }
+    )
+
+    outcome = run_triage(
+        target_date=date(2026, 8, 16),
+        events=events,
+        settings=AppSettings(),
+        provider=provider,
+    )
+
+    assert len(provider.prompts) == 2
+    assert '"event_id": "e1"' in provider.prompts[1]
+    assert '"event_id": "e0"' not in provider.prompts[1]
+    assert {item.event_id for item in outcome.all_items} == {"e0", "e1", "e2"}
+    assert [item.event_id for item in outcome.attention_items] == ["e1"]
+    assert outcome.summary.evaluated_count == 3
+    assert outcome.summary.missing_count == 0
+    assert outcome.summary.usage.request_count == 2
+    assert outcome.summary.failed is False
 
 
 def test_triage_failure_is_recorded_without_losing_the_day() -> None:
