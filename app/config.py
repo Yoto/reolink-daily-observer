@@ -1,6 +1,3 @@
-Failed to create stream fd: Operation not permitted
-Failed to create stream fd: Operation not permitted
-Failed to create stream fd: Operation not permitted
 """Typed YAML configuration with explicit environment-variable overrides."""
 
 from __future__ import annotations
