@@ -1,6 +1,3 @@
-Failed to create stream fd: Operation not permitted
-Failed to create stream fd: Operation not permitted
-Failed to create stream fd: Operation not permitted
 """Judgement pass that turns objective event records into things to check.
 
 Observation and judgement are deliberately separate stages. Event JSON stays a
