@@ -14,7 +14,7 @@ from app.daily_report import (
     DailyNarrative,
     DailyRunStats,
     generate_daily_report,
-    render_daily_report,
+    write_daily_report,
 )
 from app.event_analyzer import EventAnalyzer, chunk_frames
 from app.genai.base import (
@@ -242,7 +242,7 @@ def _event(event_id: str = "20260816-abcdef123456") -> Event:
     )
 
 
-def test_daily_generation_sends_no_frames_and_renders_three_formats(
+def test_daily_generation_sends_no_frames_and_writes_json(
     tmp_path: Path,
 ) -> None:
     settings = AppSettings.model_validate(
@@ -265,31 +265,16 @@ def test_daily_generation_sends_no_frames_and_renders_three_formats(
         settings=settings,
         provider=provider,
     )
-    artifacts = render_daily_report(
-        report, output_directory=tmp_path / "artifacts", settings=settings
-    )
+    artifact = write_daily_report(report, output_directory=tmp_path / "artifacts")
 
     assert len(provider.calls) == 1
     prompt, frames = provider.calls[0]
     assert frames == ()
     assert event.source_file in prompt
     assert "event JSON" in prompt
-    assert set(artifacts) == {"json", "markdown", "html"}
-    payload = json.loads(artifacts["json"].read_text(encoding="utf-8"))
+    assert artifact == tmp_path / "artifacts" / "daily_report.json"
+    payload = json.loads(artifact.read_text(encoding="utf-8"))
     assert payload["overview"] == "event JSONだけから作成した概要。"
-    assert "防犯カメラ日報" in artifacts["html"].read_text(encoding="utf-8")
-    assert "防犯カメラ日報" in artifacts["markdown"].read_text(encoding="utf-8")
-
-    unsafe_report = report.model_copy(
-        update={"overview": "<script>alert('model text')</script>"}
-    )
-    escaped = render_daily_report(
-        unsafe_report,
-        output_directory=tmp_path / "escaped-artifacts",
-        settings=settings,
-    )["html"].read_text(encoding="utf-8")
-    assert "<script>" not in escaped
-    assert "&lt;script&gt;" in escaped
 
 
 def test_daily_cli_offline_e2e_and_second_run_reuses_events(
@@ -364,8 +349,8 @@ def test_daily_cli_offline_e2e_and_second_run_reuses_events(
     events = sorted((output / "2026-08-16" / "events").glob("*.json"))
     assert len(events) == 2
     assert (output / "2026-08-16" / "daily_report.json").is_file()
-    assert (output / "2026-08-16" / "daily_report.md").is_file()
-    assert (output / "2026-08-16" / "daily_report.html").is_file()
+    assert not (output / "2026-08-16" / "daily_report.md").exists()
+    assert not (output / "2026-08-16" / "daily_report.html").exists()
 
     # Exact fingerprint/model/prompt/schema cache prevents ffmpeg/VLM reuse.
     assert main(["--config", str(config), "--date", "2026-08-16"]) == 0

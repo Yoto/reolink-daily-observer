@@ -244,8 +244,7 @@ prompts:
     assert settings.frames.interval_sec == 2
     assert settings.genai.max_inline_image_bytes == 9_000_000
     assert settings.paths.state_database.as_posix() == "/state/state.sqlite"
-    assert settings.report.json is True
-    assert settings.report.model_dump()["json"] is True
+    assert settings.report.language == "ja"
     # Secrets are masked by Pydantic representations and dumps can be audited.
     assert "secret-value" not in repr(settings)
 
@@ -286,7 +285,7 @@ def test_resolution_reduction_defaults_and_bounds() -> None:
         {"timezone": "UTC"},
         {"prompts": {"event_version": "event version with spaces"}},
         {"prompts": {"event_version": "x" * 116}},
-        {"report": {"json": False}},
+        {"report": {"language": "en"}},
     ],
 )
 def test_settings_reject_values_that_break_the_runtime_contract(payload) -> None:

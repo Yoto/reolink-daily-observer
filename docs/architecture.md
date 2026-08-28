@@ -23,7 +23,7 @@ Reolink Daily Observer は、Reolink RLC-823S1 が FTP 転送した MP4 を日�
 5. OpenAI の画像入力と Structured Outputs で、1 MP4 = 1 event JSON を生成します。
 6. event JSON、scene、直近の日報履歴を入力に triage を1回実行し、各イベントへ assessment / person_type / notable / anomaly_score などを付与します。
 7. 閾値以上のスコア、または notable が記載されたイベントをコード側で要確認として抽出します。
-8. event JSON と triage 結果から daily report を JSON / Markdown / HTML へ描画します。
+8. event JSON と triage 結果から canonicalな `daily_report.json` を保存します。HTML表示はviewerがJSONから動的に生成します。
 9. fingerprint、処理結果、API usage を SQLite に記録し、変更のない再実行を cache します。
 
 ## Observation

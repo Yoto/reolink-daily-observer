@@ -22,7 +22,6 @@ RUN uv sync --frozen --no-dev
 
 COPY config ./config
 COPY prompts ./prompts
-COPY templates ./templates
 COPY scripts/container-entrypoint.sh /usr/local/bin/reolink-analyzer
 
 RUN useradd --create-home --uid 10001 analyzer \

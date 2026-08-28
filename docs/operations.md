@@ -72,14 +72,12 @@ prompt や scene の変更結果を素早く確認するときに使用します
 ```text
 C:\reolink-analysis\output\2026-08-16\
 ├─ events\event_2026-08-16_<hash>.json
-├─ daily_report.json
-├─ daily_report.md
-└─ daily_report.html
+└─ daily_report.json
 
 C:\reolink-analysis\state\state.sqlite
 ```
 
-HTML は standalone ですが、在宅状況などの情報を含む可能性があるため信頼できない相手へ公開しないでください。
+`daily_report.json` はcache、過去日報、viewerに共通するcanonicalな日報です。表示方法は [Daily report viewer](viewer.md) を参照してください。
 
 ## Exit codes
 

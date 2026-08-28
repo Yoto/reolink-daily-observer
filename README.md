@@ -1,6 +1,6 @@
 # Reolink Daily Observer PoC
 
-Reolink RLC-823S1 が FTP 転送した MP4 を日単位で観察し、1動画ごとの event JSON と、その日の `daily_report.json` / `.md` / `.html` を生成する PoC です。
+Reolink RLC-823S1 が FTP 転送した MP4 を日単位で観察し、1動画ごとの event JSON と、その日の `daily_report.json` を生成する PoC です。日報はFastAPI viewerがJSONから動的に表示します。
 
 観察と判定を分離しており、event JSON は映像から直接確認できる事実だけを記録します。その後、画像を扱わない triage が event JSON、撮影場所の説明、過去の日報から住人が確認すべきイベントを抽出します。
 
@@ -90,9 +90,7 @@ cache を無視して明示的に再解析する場合だけ `--force` を追加
 ```text
 C:\reolink-analysis\output\2026-08-16\
 ├─ events\event_2026-08-16_<hash>.json
-├─ daily_report.json
-├─ daily_report.md
-└─ daily_report.html
+└─ daily_report.json
 
 C:\reolink-analysis\state\state.sqlite
 ```

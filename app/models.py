@@ -520,7 +520,7 @@ class ReportProcessingMetadata(SchemaModel):
 
 
 class DailyReport(SchemaModel):
-    """Canonical source rendered to JSON, Markdown, and standalone HTML."""
+    """Canonical daily report persisted as JSON and rendered by the viewer."""
 
     schema_version: Identifier = SCHEMA_VERSION
     date: Date

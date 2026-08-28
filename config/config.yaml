@@ -110,9 +110,6 @@ triage:
   max_attention_items: 20
 
 report:
-  json: true
-  markdown: true
-  html: true
   language: ja
 
 processing:
