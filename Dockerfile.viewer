@@ -1,0 +1,29 @@
+FROM python:3.13-slim-bookworm
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    UV_LINK_MODE=copy \
+    PATH=/opt/viewer/.venv/bin:$PATH \
+    REPORT_OUTPUT_DIR=/data/output \
+    CAMERA_DATE_LAYOUT=nested
+
+WORKDIR /opt/viewer
+
+COPY pyproject.toml uv.lock README.md ./
+RUN pip install uv==0.11.26 \
+    && uv sync --frozen --no-dev --extra viewer --no-install-project
+
+COPY viewer ./viewer
+
+RUN groupadd --gid 10002 viewer \
+    && useradd --no-create-home --uid 10002 --gid viewer --shell /usr/sbin/nologin viewer
+
+USER viewer
+
+EXPOSE 8000
+
+# Proxy headers are intentionally ignored. The application does not need the
+# client address or external scheme, so there is no trusted-proxy surface to
+# configure incorrectly.
+CMD ["uvicorn", "viewer.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-proxy-headers"]
