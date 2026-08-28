@@ -6,6 +6,8 @@ services:
     # On Linux, set these to the dedicated host user's numeric IDs so bind
     # mount permissions work without making output/state world-writable.
     user: "${ANALYZER_UID:-10001}:${ANALYZER_GID:-10001}"
+    group_add:
+      - "${CAMERA_GID:-10010}"
     environment:
       CONFIG_PATH: /config/config.yaml
       GENAI_PROVIDER: ${GENAI_PROVIDER:-openai}
@@ -13,6 +15,7 @@ services:
       GENAI_BATCH_ENABLED: ${GENAI_BATCH_ENABLED:-true}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      ANALYZER_UMASK: ${ANALYZER_UMASK:-0027}
     volumes:
       - type: bind
         source: ${CAMERA_INPUT_DIR}
@@ -47,5 +50,84 @@ services:
       # this needs room for a whole busy day rather than one clip. It is
       # RAM-backed: raise it only as far as the host can actually give.
       - /tmp:size=${ANALYZER_TMPFS_SIZE:-4g},mode=1777
-    network_mode: bridge
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - analyzer_egress
     restart: "no"
+
+  viewer:
+    build:
+      context: .
+      dockerfile: Dockerfile.viewer
+    image: reolink-daily-observer-viewer:local
+    user: "${VIEWER_UID:-10002}:${VIEWER_GID:-10002}"
+    group_add:
+      - "${ANALYSIS_GID:-10001}"
+    environment:
+      REPORT_OUTPUT_DIR: /data/output
+      CAMERA_DATE_LAYOUT: ${CAMERA_DATE_LAYOUT:-nested}
+    volumes:
+      - type: bind
+        source: ${ANALYSIS_OUTPUT_DIR}
+        target: /data/output
+        read_only: true
+    expose:
+      - "8000"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - frontend
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2).read()"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+
+  nginx:
+    image: nginxinc/nginx-unprivileged:1.30-alpine
+    user: "${NGINX_UID:-10003}:${NGINX_GID:-10003}"
+    group_add:
+      - "${CAMERA_GID:-10010}"
+    ports:
+      - "${VIEWER_HTTP_PORT:-80}:8080"
+    volumes:
+      - type: bind
+        source: ./nginx/default.conf
+        target: /etc/nginx/conf.d/default.conf
+        read_only: true
+      - type: bind
+        source: ${CAMERA_INPUT_DIR}
+        target: /data/input
+        read_only: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - frontend
+    depends_on:
+      viewer:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+
+networks:
+  frontend:
+  analyzer_egress:

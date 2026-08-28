@@ -51,6 +51,16 @@ docker compose --env-file .env build
 docker compose --env-file .env run --rm analyzer
 ```
 
+日報viewerを起動します。ブラウザから `http://localhost/`（ポートを変更した場合は
+`VIEWER_HTTP_PORT`）へアクセスしてください。
+
+```powershell
+docker compose --env-file .env up -d viewer nginx
+```
+
+viewerは日報JSONだけをread-onlyで読み、MP4はnginxが直接配信します。FastAPIの
+8000番ポートはホストへ公開されません。
+
 ## Basic Usage
 
 日付指定:
@@ -96,6 +106,7 @@ C:\reolink-analysis\state\state.sqlite
 | [Operations](docs/operations.md) | 実行、Batch API、定期実行、障害対応 |
 | [Tuning and Evaluation](docs/tuning-and-evaluation.md) | 誤検知の改善方針、triage 回帰評価 |
 | [Development](docs/development.md) | ローカル開発、mock、テスト、再ビルド |
+| [Viewer](docs/viewer.md) | 日報UI、nginx、権限とセキュリティ設定 |
 | [scene-author](docs/scene-author.md) | 複数の実動画から scene 追加候補を作る補助コマンド |
 
 ## Privacy
