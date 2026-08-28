@@ -25,6 +25,7 @@ def report_payload(day: str, *, source_file: str = "camera clip.mp4") -> dict:
                 "anomaly_score": 7,
                 "recording_time": f"{day}T07:42:00+09:00",
                 "source_file": source_file,
+                "related_event_ids": ["event-2"],
             }
         ],
         "representative_events": [
@@ -37,8 +38,16 @@ def report_payload(day: str, *, source_file: str = "camera clip.mp4") -> dict:
         ],
         "source_event_ids": ["event-1"],
         "processing_summary": {
-            "video_files": 1,
+            "video_files": 2,
             "event_json_count": 1,
+            "failed_count": 1,
+            "failures": [
+                {
+                    "source_file": "broken clip.mp4",
+                    "recording_time": f"{day}T08:10:00+09:00",
+                    "error": "ffprobe failed",
+                }
+            ],
         },
         "triage_summary": {
             "enabled": True,
@@ -76,6 +85,25 @@ def test_root_redirects_to_latest_and_report_navigation(tmp_path: Path) -> None:
     assert page.status_code == 200
     assert 'href="/report/2026-08-27"' in page.text
     assert 'href="/videos/2026/08/29/camera%20clip.mp4"' in page.text
+    assert "要確認 1件" in page.text
+    assert "玄関前に人がいました。" in page.text
+    assert "同じ出来事の関連動画: 1件（event-2）" in page.text
+    assert "broken clip.mp4" in page.text
+    assert "ffprobe failed" in page.text
+    assert page.text.index("要確認") < page.text.index("解析状況")
+
+
+def test_report_states_when_nothing_needs_attention(tmp_path: Path) -> None:
+    payload = report_payload("2026-08-29")
+    payload["attention_items"] = []
+    payload["triage_summary"]["attention_count"] = 0
+    write_report(tmp_path, "2026-08-29", payload)
+    client = TestClient(create_app(output_root=tmp_path))
+
+    page = client.get("/report/2026-08-29")
+    assert page.status_code == 200
+    assert "要確認 0件" in page.text
+    assert "該当なし" in page.text
 
 
 def test_flat_camera_layout_changes_video_url(tmp_path: Path) -> None:

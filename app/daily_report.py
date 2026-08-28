@@ -1,9 +1,9 @@
-"""Generate one canonical daily report from event JSON data, then render it."""
+"""Generate and persist one canonical daily report from event JSON data."""
 
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import logging
 import time
 from collections import defaultdict
@@ -12,12 +12,11 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Sequence
 
-from jinja2 import Environment, FileSystemLoader, StrictUndefined
 from pydantic import Field
 
 from app.config import AppSettings
 from app.genai.base import GenAIProvider
-from app.io_utils import atomic_write_json, atomic_write_text
+from app.io_utils import atomic_write_json
 from app.models import (
     APIUsage,
     DailyReport,
@@ -36,12 +35,6 @@ from app.triage import TriageOutcome
 
 LOGGER = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-_PERSON_TYPE_LABELS = {
-    "resident": "住人と考えられる",
-    "visitor": "来訪者と考えられる",
-    "unknown": "判別できない",
-    "not_applicable": "人物なし",
-}
 
 
 class DailyNarrative(SchemaModel):
@@ -256,55 +249,17 @@ def _report_input_signature(
     ).hexdigest()
 
 
-def render_daily_report(
+def write_daily_report(
     report: DailyReport,
     *,
     output_directory: Path,
-    settings: AppSettings,
-) -> dict[str, Path]:
-    """Render all enabled formats from exactly the same DailyReport object."""
+) -> Path:
+    """Persist the JSON contract consumed by the cache, history, and viewer."""
 
     output_directory.mkdir(parents=True, exist_ok=True)
-    artifacts: dict[str, Path] = {}
-    if settings.report.json_output:
-        target = output_directory / "daily_report.json"
-        atomic_write_json(target, report)
-        artifacts["json"] = target
-
-    template_root = PROJECT_ROOT / "templates"
-    context = {"report": _render_context(report)}
-    if settings.report.markdown_output:
-        environment = Environment(
-            loader=FileSystemLoader(template_root),
-            undefined=StrictUndefined,
-            autoescape=False,
-            keep_trailing_newline=True,
-        )
-        target = output_directory / "daily_report.md"
-        atomic_write_text(
-            target,
-            environment.get_template("daily_report.md.j2").render(**context).strip()
-            + "\n",
-        )
-        artifacts["markdown"] = target
-    if settings.report.html_output:
-        environment = Environment(
-            loader=FileSystemLoader(template_root),
-            undefined=StrictUndefined,
-            # The template filename ends in ``.html.j2`` rather than ``.html``;
-            # extension-based auto-detection would therefore leave model text
-            # and camera filenames unescaped.
-            autoescape=True,
-            keep_trailing_newline=True,
-        )
-        target = output_directory / "daily_report.html"
-        atomic_write_text(
-            target,
-            environment.get_template("daily_report.html.j2").render(**context).strip()
-            + "\n",
-        )
-        artifacts["html"] = target
-    return artifacts
+    target = output_directory / "daily_report.json"
+    atomic_write_json(target, report)
+    return target
 
 
 def _canonicalize_narrative(
@@ -402,53 +357,6 @@ def _entity_totals(events: Sequence[Event]) -> dict[str, int]:
         for entity in event.entities:
             totals[entity.type] += entity.count
     return dict(sorted(totals.items()))
-
-
-def _render_context(report: DailyReport) -> dict[str, object]:
-    payload = report.model_dump(mode="python")
-    payload["date_ja"] = (
-        f"{report.date.year}年{report.date.month}月{report.date.day}日"
-    )
-    for item in payload["representative_events"]:
-        timestamp = item["recording_time"]
-        item["recording_time_display"] = (
-            timestamp.strftime("%H:%M") if timestamp is not None else None
-        )
-    for item in payload["attention_items"]:
-        timestamp = item["recording_time"]
-        item["recording_time_display"] = (
-            timestamp.strftime("%H:%M") if timestamp is not None else None
-        )
-        item["person_type_label"] = _PERSON_TYPE_LABELS.get(
-            item["person_type"], item["person_type"]
-        )
-    triage = payload["triage_summary"]
-    payload["triage"] = {
-        "enabled": triage["enabled"],
-        "failed": triage["failed"],
-        "evaluated": triage["evaluated_count"],
-        "missing": triage["missing_count"],
-        "attention": triage["attention_count"],
-        "grouped": triage["grouped_count"],
-        "routine_explained": triage["routine_explained_count"],
-        "threshold": triage["score_threshold"],
-        "person_type_totals": triage["person_type_totals"],
-    }
-    for failure in payload["processing_summary"]["failures"]:
-        timestamp = failure["recording_time"]
-        failure["recording_time_display"] = (
-            timestamp.strftime("%H:%M") if timestamp is not None else None
-        )
-    summary = payload["processing_summary"]
-    payload["processing"] = {
-        "detected_files": summary["video_files"],
-        "succeeded": summary["event_json_count"],
-        "cached": summary["cache_reused"],
-        "unstable": summary["unstable_skipped"],
-        "failed": summary["failed_count"],
-    }
-    payload["failed_events"] = summary["failures"]
-    return payload
 
 
 def _read_relative(path: Path) -> str:

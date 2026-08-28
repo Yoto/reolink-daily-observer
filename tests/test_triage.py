@@ -8,7 +8,7 @@ from typing import Sequence
 import pytest
 
 from app.config import AppSettings, SettingsError, load_settings
-from app.daily_report import DailyRunStats, generate_daily_report, render_daily_report
+from app.daily_report import DailyRunStats, generate_daily_report
 from app.genai.base import FrameInput, GenAIProvider, StructuredResult
 from app.models import (
     APIUsage,
@@ -427,21 +427,9 @@ def test_report_renders_attention_first_and_counts_it(tmp_path: Path) -> None:
     assert report.triage_summary.attention_count == 1
     assert report.attention_items[0].event_id == "e0"
 
-    artifacts = render_daily_report(
-        report, output_directory=tmp_path, settings=settings
-    )
-    markdown = artifacts["markdown"].read_text(encoding="utf-8")
-    assert "要確認 1件" in markdown
-    assert "深夜帯に敷地内で滞留している" in markdown
-    # The attention section must precede the general narrative sections.
-    assert markdown.index("## 要確認") < markdown.index("## 解析状況")
-
-    html = artifacts["html"].read_text(encoding="utf-8")
-    assert "要確認 1件" in html
-
-    payload = json.loads(artifacts["json"].read_text(encoding="utf-8"))
-    assert payload["triage_summary"]["evaluated_count"] == 2
-    assert payload["attention_items"][0]["person_type"] == "unknown"
+    assert report.triage_summary.evaluated_count == 2
+    assert report.attention_items[0].notable == "深夜帯に敷地内で滞留している"
+    assert report.attention_items[0].person_type == "unknown"
 
 
 def test_report_states_when_nothing_needs_attention(tmp_path: Path) -> None:
@@ -473,14 +461,9 @@ def test_report_states_when_nothing_needs_attention(tmp_path: Path) -> None:
         provider=provider,
         triage=triage,
     )
-    artifacts = render_daily_report(
-        report, output_directory=tmp_path, settings=settings
-    )
-
-    markdown = artifacts["markdown"].read_text(encoding="utf-8")
-    assert "要確認 0件" in markdown
-    assert "該当なし" in markdown
-    assert "判定した1件" in markdown
+    assert report.triage_summary.attention_count == 0
+    assert report.triage_summary.evaluated_count == 1
+    assert report.attention_items == []
 
 
 def test_attention_items_must_reference_known_events() -> None:
@@ -696,14 +679,9 @@ def test_related_events_are_rendered_and_validated(tmp_path: Path) -> None:
         provider=provider,
         triage=triage,
     )
-    artifacts = render_daily_report(
-        report, output_directory=tmp_path, settings=settings
-    )
-
-    markdown = artifacts["markdown"].read_text(encoding="utf-8")
-    assert "要確認 1件" in markdown
-    assert "同じ出来事の関連動画: 1件" in markdown
-    assert "e0" in markdown
+    assert report.triage_summary.attention_count == 1
+    assert report.attention_items[0].event_id == "e1"
+    assert report.attention_items[0].related_event_ids == ["e0"]
 
 
 def test_an_item_cannot_relate_to_itself() -> None:

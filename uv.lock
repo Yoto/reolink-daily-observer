@@ -635,7 +635,6 @@ name = "reolink-daily-observer"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "jinja2" },
     { name = "openai" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
@@ -651,6 +650,7 @@ dev = [
 ]
 viewer = [
     { name = "fastapi" },
+    { name = "jinja2" },
     { name = "uvicorn" },
 ]
 
@@ -658,7 +658,7 @@ viewer = [
 requires-dist = [
     { name = "fastapi", marker = "extra == 'viewer'", specifier = ">=0.116.0,<1" },
     { name = "httpx2", marker = "extra == 'dev'", specifier = ">=2.12.0,<3" },
-    { name = "jinja2", specifier = ">=3.1.6,<4" },
+    { name = "jinja2", marker = "extra == 'viewer'", specifier = ">=3.1.6,<4" },
     { name = "openai", specifier = ">=2.0.0,<3" },
     { name = "pydantic", specifier = ">=2.11.0,<3" },
     { name = "pydantic-settings", specifier = ">=2.10.0,<3" },

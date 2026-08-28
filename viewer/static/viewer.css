@@ -25,5 +25,7 @@ a { color:#145c7a; text-underline-offset:.16em; }
 .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:.75rem; }
 .stats div { padding:.8rem; border:1px solid var(--line); border-radius:8px; text-align:center; }
 .stats strong { display:block; font-size:1.5rem; }
+table { width:100%; border-collapse:collapse; }
+th,td { padding:.6rem; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; }
 @media (max-width:700px) { main { margin:0; padding:20px; border:0; border-radius:0; } .date-navigation { grid-template-columns:1fr 1fr; } .date-navigation form { grid-column:1 / -1; grid-row:1; justify-self:center; } }
 @media print { body { background:white; } main { margin:0; border:0; box-shadow:none; max-width:none; } .date-navigation,.video-link { display:none; } }

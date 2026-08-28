@@ -287,33 +287,7 @@ class TriageSettings(SettingsModel):
 
 
 class ReportSettings(SettingsModel):
-    # The PoC contract requires all three canonical renderings. Keeping JSON
-    # mandatory also guarantees the daily narrative cache artifact exists.
-    json_output: Literal[True] = Field(
-        default=True, validation_alias="json", serialization_alias="json"
-    )
-    markdown_output: Literal[True] = Field(
-        default=True, validation_alias="markdown", serialization_alias="markdown"
-    )
-    html_output: Literal[True] = Field(
-        default=True, validation_alias="html", serialization_alias="html"
-    )
     language: Literal["ja"] = "ja"
-
-    # Compatibility accessors keep orchestration code concise while avoiding a
-    # Pydantic field named ``json``, which conflicts with BaseModel's legacy
-    # serialization method.
-    @property
-    def json(self) -> bool:
-        return self.json_output
-
-    @property
-    def markdown(self) -> bool:
-        return self.markdown_output
-
-    @property
-    def html(self) -> bool:
-        return self.html_output
 
 
 class ProcessingSettings(SettingsModel):

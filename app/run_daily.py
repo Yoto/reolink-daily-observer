@@ -18,7 +18,7 @@ from zoneinfo import ZoneInfo
 from pydantic import ValidationError
 
 from app.config import AppSettings, load_settings
-from app.daily_report import DailyRunStats, generate_daily_report, render_daily_report
+from app.daily_report import DailyRunStats, generate_daily_report, write_daily_report
 from app.event_analyzer import (
     EVENT_ANALYSIS_PIPELINE_VERSION,
     EventAnalyzer,
@@ -191,9 +191,7 @@ def _daily_command(argv: Sequence[str]) -> int:
             cache_path=output_directory / "daily_report.json",
             force=args.force,
         )
-        artifacts = render_daily_report(
-            report, output_directory=output_directory, settings=settings
-        )
+        artifact = write_daily_report(report, output_directory=output_directory)
         report_run_sec = time.perf_counter() - report_started
         report_run_usage = (
             APIUsage() if report.processing.cache_reused else report.processing.usage
@@ -204,7 +202,7 @@ def _daily_command(argv: Sequence[str]) -> int:
             "triage_evaluated=%d attention=%d "
             "requests=%d input_tokens=%s output_tokens=%s total_tokens=%s "
             "estimated_cost=%s report_cached=%s report_provider=%s report_model=%s "
-            "daily_report_processing_sec=%.3f artifacts=%s",
+            "daily_report_processing_sec=%.3f artifact=%s",
             target_date,
             len(results.events),
             results.cached,
@@ -221,7 +219,7 @@ def _daily_command(argv: Sequence[str]) -> int:
             report.processing.provider,
             report.processing.model,
             report_run_sec,
-            ",".join(str(path) for path in artifacts.values()),
+            artifact,
         )
         report_fallback = report.processing.provider == "local-fallback" and bool(
             results.events
