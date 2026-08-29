@@ -59,13 +59,12 @@
       <p class="event-time">{% if item.recording_time_display %}{{ item.recording_time_display }}{% else %}時刻不明{% endif %}</p>
       <h3>{{ item.title }}</h3>
       {% if item.video_url %}
-      <video class="attention-video" controls preload="metadata" playsinline src="{{ item.video_url }}#t=0.1">
+      <video class="attention-video" controls preload="metadata" playsinline src="{{ item.video_url }}#t=5">
         お使いのブラウザでは動画を再生できません。
       </video>
       {% endif %}
       <h4>確認してほしい理由</h4>
       <p>{{ item.reason }}</p>
-      {% if item.video_url %}<p><a class="video-link" href="{{ item.video_url }}">動画を大きく見る</a></p>{% endif %}
     </article>
     {% endfor %}
   </section>
