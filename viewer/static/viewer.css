@@ -27,5 +27,81 @@ a { color:#145c7a; text-underline-offset:.16em; }
 .stats strong { display:block; font-size:1.5rem; }
 table { width:100%; border-collapse:collapse; }
 th,td { padding:.6rem; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; }
-@media (max-width:700px) { main { margin:0; padding:20px; border:0; border-radius:0; } .date-navigation { grid-template-columns:1fr 1fr; } .date-navigation form { grid-column:1 / -1; grid-row:1; justify-self:center; } }
+
+.visually-hidden { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
+.view-switch { margin-bottom:1rem; }
+
+.family-report { max-width:780px; padding:0 48px 48px; overflow:hidden; }
+.topbar { display:flex; align-items:center; justify-content:space-between; min-height:64px; margin:0 -48px; padding:0 48px; border-bottom:1px solid #e7e1d8; background:#fffdfa; }
+.site-name { color:#315b52; font-weight:750; letter-spacing:.04em; }
+.view-menu { position:relative; }
+.view-menu summary { cursor:pointer; color:#315b52; font-weight:650; list-style:none; }
+.view-menu summary::-webkit-details-marker { display:none; }
+.view-menu summary::before { content:"☰"; margin-right:.45rem; }
+.view-menu nav { position:absolute; z-index:2; top:2rem; right:0; width:max-content; padding:.7rem .9rem; border:1px solid #d9d2c7; border-radius:10px; background:white; box-shadow:0 8px 24px rgba(43,51,46,.12); }
+.family-report .date-navigation { margin:0 -48px; padding:1rem 48px; border-bottom:1px solid #ece7df; background:#faf8f4; }
+.family-report .date-navigation a { font-weight:650; text-decoration:none; }
+.family-report input,.family-report button { border:1px solid #cfc8bd; border-radius:7px; background:white; }
+.family-report button { cursor:pointer; color:#315b52; font-weight:650; }
+.family-header { padding:3.4rem 0 1rem; }
+.family-header .eyebrow { margin:0 0 .65rem; color:#756d61; font-size:.93rem; font-weight:650; letter-spacing:.04em; }
+.family-header h1 { margin:0 0 1.1rem; color:#274b43; font-family:"Yu Mincho","Hiragino Mincho ProN",serif; font-size:2.15rem; line-height:1.4; }
+.family-header .lead { margin:0; font-size:1.07rem; line-height:1.9; }
+.family-status { margin:1rem 0 2.75rem; padding:1rem 1.1rem; border-radius:12px; }
+.family-status.all-clear { border:1px solid #bfd8cb; background:#f0f7f3; color:#315e4d; }
+.family-status.attention-present { border:1px solid #e0c7a6; background:#fff8ed; color:#77502c; }
+.family-status.gentle { border:1px solid #d9cbb9; background:#faf6f0; color:#675747; }
+.family-report section { margin-top:3rem; }
+.family-report h2 { margin:0; padding:0; border:0; color:#274b43; font-size:1.5rem; }
+.section-heading { display:flex; align-items:flex-start; gap:.9rem; margin-bottom:1.25rem; }
+.section-heading p { margin:.25rem 0 0; color:#756d61; }
+.section-number { display:grid; flex:0 0 2rem; width:2rem; height:2rem; place-items:center; margin:0 !important; border-radius:50%; background:#dce9e3; color:#315b52 !important; font-weight:750; }
+.family-attention { margin:1rem 0; padding:1.25rem; border:1px solid #ead9c3; border-radius:14px; background:#fffbf5; }
+.family-attention .event-time { display:inline-block; margin:0 0 .5rem; padding:.15rem .65rem; border-radius:999px; background:#f1dfc8; color:#71502e; font-size:.9rem; font-weight:750; }
+.family-attention h3 { margin:.15rem 0 1rem; font-size:1.18rem; }
+.family-attention h4 { margin:1.1rem 0 .25rem; color:#5e4934; }
+.attention-video,.scene-preview { display:block; width:100%; aspect-ratio:16 / 9; border-radius:10px; background:#26302d; object-fit:cover; }
+.family-report .video-link { padding:.55rem .9rem; border-color:#a9c2b8; background:#eef6f2; color:#264f45; text-decoration:none; }
+.period-list { border-top:1px solid #e7e1d8; }
+.period { display:grid; grid-template-columns:8rem 1fr; gap:1.25rem; padding:1rem 0; border-bottom:1px solid #e7e1d8; }
+.period h3,.period p { margin:0; }
+.period h3 { color:#52675f; font-size:1rem; }
+.notice-card { margin-top:1.25rem; padding:1rem 1.15rem; border-radius:12px; background:#f5f4ef; }
+.notice-card h3 { margin-top:0; color:#52675f; font-size:1rem; }
+.notice-card ul { margin-bottom:0; padding-left:1.3rem; }
+.scene-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:1rem; }
+.scene-card { overflow:hidden; border:1px solid #ded8ce; border-radius:13px; background:#fffdfa; }
+.scene-card .scene-preview { border-radius:0; }
+.scene-copy { padding:.9rem; }
+.scene-copy h3 { margin:0 0 .35rem; color:#52675f; font-size:.95rem; }
+.scene-copy p { margin:.35rem 0 .7rem; font-size:.94rem; line-height:1.65; }
+.scene-copy a { font-size:.9rem; font-weight:650; }
+.watch-note { padding:1.35rem 1.45rem; border-radius:15px; background:#eaf2ee; color:#2f5249; }
+.watch-note p { margin:.3rem 0; }
+.watch-note-label { font-size:.9rem; font-weight:750; letter-spacing:.05em; }
+.recording-note { display:flex; flex-direction:column; margin-top:1.5rem; padding:.85rem 1rem; border-left:4px solid #c4ad8e; background:#f7f3ed; color:#665745; font-size:.92rem; }
+.family-report footer { margin-top:3rem; padding-top:1.25rem; border-top:1px solid #e7e1d8; text-align:center; }
+.family-report footer a { color:#6a7772; font-size:.9rem; }
+
+@media (max-width:700px) {
+  main { margin:0; padding:20px; border:0; border-radius:0; }
+  .date-navigation { grid-template-columns:1fr 1fr; }
+  .date-navigation form { grid-column:1 / -1; grid-row:1; justify-self:center; }
+  .family-report { padding:0 20px 36px; }
+  .topbar { margin:0 -20px; padding:0 20px; }
+  .family-report .date-navigation { margin:0 -20px; padding:1rem 20px; }
+  .family-header { padding-top:2.6rem; }
+  .family-header h1 { font-size:1.8rem; }
+  .period { grid-template-columns:1fr; gap:.3rem; }
+  .scene-grid { grid-template-columns:1fr; }
+  .scene-card { display:grid; grid-template-columns:minmax(120px,42%) 1fr; }
+  .scene-card .scene-preview { height:100%; min-height:150px; aspect-ratio:auto; }
+}
+@media (max-width:430px) {
+  .family-report .date-navigation { grid-template-columns:1fr 1fr; }
+  .family-report .date-navigation form { width:100%; }
+  .family-report .date-navigation input { min-width:0; width:100%; }
+  .scene-card { display:block; }
+  .scene-card .scene-preview { min-height:0; aspect-ratio:16 / 9; }
+}
 @media print { body { background:white; } main { margin:0; border:0; box-shadow:none; max-width:none; } .date-navigation,.video-link { display:none; } }

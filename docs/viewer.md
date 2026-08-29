@@ -31,8 +31,15 @@ docker compose --env-file .env up -d --build viewer nginx
 docker compose --env-file .env stop nginx viewer
 ```
 
-`/`は利用可能な最新日へ移動します。`/report/YYYY-MM-DD`は指定日を表示し、画面上の
-前後リンクと日付入力から切り替えられます。動画リンクはnginxの
+`/`は利用可能な最新日へ移動します。`/report/YYYY-MM-DD`は家族向け日報を既定で
+表示し、画面上の前後リンクと日付入力から切り替えられます。家族向け日報は要確認動画、
+一日の概要、時間帯別の様子、最大3件の「今日の場面」を中心に表示し、triageのスコア、
+event ID、cache利用状況、処理エラーの詳細は表示しません。要確認動画と「今日の場面」は
+元MP4をページへ埋め込み、別途thumbnailファイルは生成しません。
+
+メニューの「解析の詳細」は`/report/YYYY-MM-DD/details`を開き、従来の日報内容と処理情報を
+そのまま表示します。この表示変更はviewer内で完結し、analyzerが生成するevent JSONと
+`daily_report.json`のschema・生成処理は変更しません。動画リンクと埋め込みはnginxの
 `/videos/YYYY/MM/DD/<file>.mp4`（`CAMERA_DATE_LAYOUT=flat`なら
 `/videos/YYYY-MM-DD/<file>.mp4`）を開きます。
 
