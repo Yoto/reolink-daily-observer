@@ -113,7 +113,7 @@ def test_root_redirects_to_latest_and_report_navigation(tmp_path: Path) -> None:
     assert "確認をお願いしたい動画が1件あります" in page.text
     assert "玄関前に人がいました。" in page.text
     assert 'src="/videos/2026/08/29/camera%20clip.mp4#t=0.1"' in page.text
-    assert 'src="/videos/2026/08/29/routine%20clip.mp4#t=0.1"' in page.text
+    assert 'src="/videos/2026/08/29/routine%20clip.mp4#t=5"' in page.text
     assert "今日の場面" in page.text
     assert "午後は少しにぎやかな時間がありました。" in page.text
     assert "異常度" not in page.text
@@ -156,6 +156,7 @@ def test_flat_camera_layout_changes_video_url(tmp_path: Path) -> None:
     page = client.get("/report/2026-08-29")
     assert 'href="/videos/2026-08-29/camera%20clip.mp4"' in page.text
     assert 'src="/videos/2026-08-29/camera%20clip.mp4#t=0.1"' in page.text
+    assert 'src="/videos/2026-08-29/routine%20clip.mp4#t=5"' in page.text
 
 
 def test_ai_text_is_escaped_and_openapi_is_disabled(tmp_path: Path) -> None:
