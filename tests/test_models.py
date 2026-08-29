@@ -249,6 +249,12 @@ prompts:
     assert "secret-value" not in repr(settings)
 
 
+def test_load_settings_ignores_container_umask_environment_variable() -> None:
+    settings = load_settings(environ={"ANALYZER_UMASK": "0027"})
+
+    assert settings == AppSettings()
+
+
 def test_load_settings_fails_for_missing_placeholder(tmp_path) -> None:
     config_path = tmp_path / "config.yaml"
     config_path.write_text("genai:\n  model: ${MISSING_MODEL}\n", encoding="utf-8")

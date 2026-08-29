@@ -364,6 +364,13 @@ _DIRECT_OVERRIDES: dict[str, tuple[str, ...]] = {
     "GENAI_BATCH_ENABLED": ("genai", "batch", "enabled"),
 }
 
+_NON_SETTINGS_ANALYZER_ENV_VARS = {
+    "ANALYZER_CONFIG",
+    # Consumed by scripts/container-entrypoint.sh before the Python process
+    # starts; it controls filesystem permissions, not AppSettings.
+    "ANALYZER_UMASK",
+}
+
 
 def _apply_env_overrides(data: dict[str, Any], environ: Mapping[str, str]) -> None:
     for variable, path in _DIRECT_OVERRIDES.items():
@@ -379,7 +386,10 @@ def _apply_env_overrides(data: dict[str, Any], environ: Mapping[str, str]) -> No
     # ANALYZER_FRAMES__INTERVAL_SEC=2 and ANALYZER_TIMEZONE=Asia/Tokyo.
     prefix = "ANALYZER_"
     for variable, raw_value in environ.items():
-        if not variable.startswith(prefix) or variable == "ANALYZER_CONFIG":
+        if (
+            not variable.startswith(prefix)
+            or variable in _NON_SETTINGS_ANALYZER_ENV_VARS
+        ):
             continue
         key = variable[len(prefix):]
         path = tuple(part.lower() for part in key.split("__"))
