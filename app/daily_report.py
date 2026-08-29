@@ -15,6 +15,7 @@ from typing import Sequence
 from pydantic import Field
 
 from app.config import AppSettings
+from app.family_report import generate_family_report
 from app.genai.base import GenAIProvider
 from app.io_utils import atomic_write_json
 from app.models import (
@@ -152,7 +153,7 @@ def generate_daily_report(
         unstable_skipped=stats.unstable_skipped,
         failures=list(stats.failed),
     )
-    return DailyReport(
+    report = DailyReport(
         schema_version=SCHEMA_VERSION,
         date=target_date,
         timezone=settings.timezone,
@@ -184,6 +185,25 @@ def generate_daily_report(
             )
         ),
     )
+
+    # The detailed report remains the canonical history/cache contract.  The
+    # family report is an independent sibling artifact with its own prompt,
+    # schema, signature and cache, generated from the same event/triage inputs.
+    # Keeping this call here preserves the existing run_daily orchestration and
+    # the event -> triage boundary unchanged.
+    if cache_path is not None:
+        generate_family_report(
+            target_date=target_date,
+            events=events,
+            processing_summary=processing_summary,
+            settings=settings,
+            provider=provider,
+            triage=triage,
+            cache_path=cache_path.with_name("family_report.json"),
+            force=force,
+        )
+
+    return report
 
 
 def _load_report_cache(
