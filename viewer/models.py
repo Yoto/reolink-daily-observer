@@ -1,6 +1,6 @@
-"""The persisted daily-report contract consumed by the viewer.
+"""Persisted report contracts consumed by the viewer.
 
-The viewer deliberately owns this small read model instead of importing the
+The viewer deliberately owns these small read models instead of importing the
 analyzer implementation. JSON is the boundary between the two containers.
 """
 
@@ -71,6 +71,25 @@ class RepresentativeEvent(ViewModel):
     _source_is_safe = field_validator("source_file")(safe_source_file)
 
 
+class FamilyAttentionItem(ViewModel):
+    event_id: str
+    recording_time: datetime | None = None
+    source_file: str
+    title: str
+    reason: str
+
+    _source_is_safe = field_validator("source_file")(safe_source_file)
+
+
+class FamilyScene(ViewModel):
+    event_id: str
+    recording_time: datetime | None = None
+    source_file: str
+    description: str
+
+    _source_is_safe = field_validator("source_file")(safe_source_file)
+
+
 class FailedEvent(ViewModel):
     source_file: str
     recording_time: datetime | None = None
@@ -113,5 +132,20 @@ class DailyReport(ViewModel):
     recurring_patterns: list[str] = Field(default_factory=list)
     entity_totals: dict[str, int] = Field(default_factory=dict)
     representative_events: list[RepresentativeEvent] = Field(default_factory=list)
+    processing_summary: ProcessingSummary
+    triage_summary: TriageSummary = Field(default_factory=TriageSummary)
+
+
+class FamilyReport(ViewModel):
+    schema_version: Literal["1.0"]
+    date: date
+    timezone: str
+    title: str
+    event_count: int = Field(ge=0)
+    overview: str
+    attention_items: list[FamilyAttentionItem] = Field(default_factory=list)
+    time_periods: list[TimePeriod] = Field(default_factory=list)
+    scenes: list[FamilyScene] = Field(default_factory=list)
+    closing_comment: str
     processing_summary: ProcessingSummary
     triage_summary: TriageSummary = Field(default_factory=TriageSummary)
