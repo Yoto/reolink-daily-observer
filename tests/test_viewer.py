@@ -171,6 +171,20 @@ def test_ai_text_is_escaped_and_openapi_is_disabled(tmp_path: Path) -> None:
     assert client.get("/openapi.json").status_code == 404
 
 
+def test_scene_preview_keeps_its_full_frame_and_description_space(
+    tmp_path: Path,
+) -> None:
+    client = TestClient(create_app(output_root=tmp_path))
+
+    response = client.get("/static/viewer.css")
+    compact_css = "".join(response.text.split())
+
+    assert response.status_code == 200
+    assert "object-fit:cover" not in compact_css
+    assert ".scene-preview{aspect-ratio:auto;}" in compact_css
+    assert ".scene-card.scene-preview{height:auto;" in compact_css
+
+
 def test_traversal_source_and_mismatched_report_date_are_rejected(
     tmp_path: Path,
 ) -> None:
