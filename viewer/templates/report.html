@@ -112,6 +112,7 @@
   <section class="watch-note">
     <p class="watch-note-label">今日の見守りメモ</p>
     <p>{{ report.closing_comment }}</p>
+    {% if report.legacy_family_fallback and not report.attention_items and report.triage_summary.enabled and not report.triage_summary.failed and not report.processing_summary.failed_count and not report.processing_summary.unstable_skipped %}<p>そのほかに、特に変わった出来事は見つかりませんでした。</p>{% endif %}
   </section>
 
   {% if report.processing_summary.failed_count or report.processing_summary.unstable_skipped %}
