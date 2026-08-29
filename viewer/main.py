@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
 
-from viewer.models import DailyReport
+from viewer.models import DailyReport, FamilyReport
 
 
 LOGGER = logging.getLogger(__name__)
@@ -49,33 +49,42 @@ class ReportStore:
                 continue
             try:
                 day = date.fromisoformat(entry.name)
-                self.load(day)
+                self.load_daily(day)
             except (ValueError, FileNotFoundError, ValidationError, OSError):
                 continue
             available.append(day)
         return sorted(available)
 
-    def load(self, day: date) -> DailyReport:
+    def load_daily(self, day: date) -> DailyReport:
+        return self._load(day, "daily_report.json", DailyReport)
+
+    def load_family(self, day: date) -> FamilyReport | None:
+        try:
+            return self._load(day, "family_report.json", FamilyReport)
+        except FileNotFoundError:
+            return None
+
+    def _load(self, day: date, filename: str, model):
         day_directory = self.root / day.isoformat()
-        report_path = day_directory / "daily_report.json"
+        report_path = day_directory / filename
         try:
             directory_mode = day_directory.lstat().st_mode
             file_mode = report_path.lstat().st_mode
             if not stat.S_ISDIR(directory_mode) or not stat.S_ISREG(file_mode):
                 raise FileNotFoundError(report_path)
             if report_path.stat().st_size > MAX_REPORT_BYTES:
-                raise ValueError("daily report exceeds the viewer size limit")
+                raise ValueError(f"{filename} exceeds the viewer size limit")
             resolved = report_path.resolve(strict=True)
             if not resolved.is_relative_to(self.root):
-                raise ValueError("daily report resolves outside the output root")
+                raise ValueError(f"{filename} resolves outside the output root")
             payload = json.loads(report_path.read_text(encoding="utf-8"))
-            report = DailyReport.model_validate(payload)
+            report = model.model_validate(payload)
         except FileNotFoundError:
             raise
         except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValidationError) as exc:
-            raise ValueError("daily report is invalid") from exc
+            raise ValueError(f"{filename} is invalid") from exc
         if report.date != day:
-            raise ValueError("daily report date does not match its directory")
+            raise ValueError(f"{filename} date does not match its directory")
         return report
 
 
@@ -101,16 +110,23 @@ def _video_path(
     return "/videos/" + quote(path.as_posix(), safe="/")
 
 
-def _view_context(
+def _date_fields(report_date: date) -> dict[str, object]:
+    weekday = WEEKDAY_LABELS[report_date.weekday()]
+    return {
+        "date": report_date,
+        "date_ja": (
+            f"{report_date.year}年{report_date.month}月{report_date.day}日（{weekday}）"
+        ),
+    }
+
+
+def _daily_view_context(
     report: DailyReport,
     *,
     layout: Literal["nested", "flat"],
 ) -> dict[str, object]:
     payload = report.model_dump(mode="python")
-    weekday = WEEKDAY_LABELS[report.date.weekday()]
-    payload["date_ja"] = (
-        f"{report.date.year}年{report.date.month}月{report.date.day}日（{weekday}）"
-    )
+    payload.update(_date_fields(report.date))
     for collection in ("attention_items", "representative_events"):
         for item in payload[collection]:
             timestamp = item["recording_time"]
@@ -122,15 +138,6 @@ def _view_context(
         item["person_type_label"] = PERSON_TYPE_LABELS.get(
             item["person_type"], item["person_type"]
         )
-    attention_event_ids = {
-        item["event_id"] for item in payload["attention_items"]
-    }
-    payload["family_scenes"] = [
-        item
-        for item in payload["representative_events"]
-        if item["event_id"] not in attention_event_ids
-    ][:3]
-    payload["family_comment"] = _family_comment(report)
     for failure in payload["processing_summary"]["failures"]:
         timestamp = failure["recording_time"]
         failure["recording_time_display"] = (
@@ -139,8 +146,62 @@ def _view_context(
     return payload
 
 
-def _family_comment(report: DailyReport) -> str:
-    """Build a calm closing line without inventing facts absent from the report."""
+def _family_view_context(
+    family: FamilyReport | None,
+    detailed: DailyReport,
+    *,
+    layout: Literal["nested", "flat"],
+) -> dict[str, object]:
+    if family is None:
+        return _legacy_family_context(detailed, layout=layout)
+
+    payload = family.model_dump(mode="python")
+    payload.update(_date_fields(family.date))
+    for collection in ("attention_items", "scenes"):
+        for item in payload[collection]:
+            timestamp = item["recording_time"]
+            item["recording_time_display"] = (
+                timestamp.strftime("%H:%M") if timestamp is not None else None
+            )
+            item["video_url"] = _video_path(family.date, item["source_file"], layout)
+    return payload
+
+
+def _legacy_family_context(
+    report: DailyReport,
+    *,
+    layout: Literal["nested", "flat"],
+) -> dict[str, object]:
+    detailed = _daily_view_context(report, layout=layout)
+    attention_ids = {item["event_id"] for item in detailed["attention_items"]}
+    return {
+        **_date_fields(report.date),
+        "event_count": report.event_count,
+        "overview": report.overview,
+        "attention_items": [
+            {
+                "event_id": item["event_id"],
+                "recording_time_display": item["recording_time_display"],
+                "video_url": item["video_url"],
+                "title": item["notable"] or "少し気になる動きがありました",
+                "reason": item["assessment"],
+            }
+            for item in detailed["attention_items"]
+        ],
+        "time_periods": detailed["time_periods"],
+        "scenes": [
+            item
+            for item in detailed["representative_events"]
+            if item["event_id"] not in attention_ids
+        ][:3],
+        "closing_comment": _legacy_family_comment(report),
+        "processing_summary": detailed["processing_summary"],
+        "triage_summary": detailed["triage_summary"],
+    }
+
+
+def _legacy_family_comment(report: DailyReport) -> str:
+    """Historical fallback for days without family_report.json."""
 
     if report.recurring_patterns:
         return report.recurring_patterns[0]
@@ -201,36 +262,53 @@ def create_app(
             f"/report/{report_date.isoformat()}/details", status_code=302
         )
 
-    def render_report(request: Request, report_date: date, template: str):
-        try:
-            report = store.load(report_date)
-        except FileNotFoundError as exc:
-            raise HTTPException(status_code=404, detail="Daily report not found") from exc
-        except ValueError as exc:
-            LOGGER.exception("refusing invalid daily report date=%s", report_date)
-            raise HTTPException(status_code=500, detail="Daily report is invalid") from exc
-
+    def navigation(report_date: date) -> tuple[date | None, date | None]:
         dates = store.available_dates()
         position = dates.index(report_date)
         previous_date = dates[position - 1] if position > 0 else None
         next_date = dates[position + 1] if position + 1 < len(dates) else None
+        return previous_date, next_date
+
+    @application.get("/report/{report_date}", include_in_schema=False)
+    def show_report(request: Request, report_date: date):
+        try:
+            detailed = store.load_daily(report_date)
+            family = store.load_family(report_date)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Daily report not found") from exc
+        except ValueError as exc:
+            LOGGER.exception("refusing invalid report date=%s", report_date)
+            raise HTTPException(status_code=500, detail="Daily report is invalid") from exc
+        previous_date, next_date = navigation(report_date)
         return templates.TemplateResponse(
             request=request,
-            name=template,
+            name="report.html",
             context={
-                "report": _view_context(report, layout=layout),
+                "report": _family_view_context(family, detailed, layout=layout),
                 "previous_date": previous_date,
                 "next_date": next_date,
             },
         )
 
-    @application.get("/report/{report_date}", include_in_schema=False)
-    def show_report(request: Request, report_date: date):
-        return render_report(request, report_date, "report.html")
-
     @application.get("/report/{report_date}/details", include_in_schema=False)
     def show_report_details(request: Request, report_date: date):
-        return render_report(request, report_date, "report_detail.html")
+        try:
+            report = store.load_daily(report_date)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Daily report not found") from exc
+        except ValueError as exc:
+            LOGGER.exception("refusing invalid daily report date=%s", report_date)
+            raise HTTPException(status_code=500, detail="Daily report is invalid") from exc
+        previous_date, next_date = navigation(report_date)
+        return templates.TemplateResponse(
+            request=request,
+            name="report_detail.html",
+            context={
+                "report": _daily_view_context(report, layout=layout),
+                "previous_date": previous_date,
+                "next_date": next_date,
+            },
+        )
 
     return application
 
