@@ -3,51 +3,133 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{ report.title }} — {{ report.date }}</title>
+  <title>{{ report.date_ja }}の見守り日報</title>
   <link rel="stylesheet" href="/static/viewer.css">
 </head>
 <body>
-<main>
+<main class="family-report">
+  <div class="topbar">
+    <span class="site-name">見守り日報</span>
+    <details class="view-menu">
+      <summary>メニュー</summary>
+      <nav aria-label="日報メニュー">
+        <a href="/report/{{ report.date }}/details">解析の詳細を見る</a>
+      </nav>
+    </details>
+  </div>
+
   <nav class="date-navigation" aria-label="日報の日付">
-    {% if previous_date %}<a rel="prev" href="/report/{{ previous_date }}">← {{ previous_date }}</a>{% else %}<span></span>{% endif %}
+    {% if previous_date %}<a rel="prev" href="/report/{{ previous_date }}">← 前の日</a>{% else %}<span></span>{% endif %}
     <form action="/report" method="get">
-      <label for="report-date">日付</label>
+      <label class="visually-hidden" for="report-date">日付</label>
       <input id="report-date" name="date" type="date" value="{{ report.date }}" required>
       <button type="submit">表示</button>
     </form>
-    {% if next_date %}<a rel="next" href="/report/{{ next_date }}">{{ next_date }} →</a>{% else %}<span></span>{% endif %}
+    {% if next_date %}<a rel="next" href="/report/{{ next_date }}">次の日 →</a>{% else %}<span></span>{% endif %}
   </nav>
 
-  <header><h1>{{ report.title }}</h1><p class="date">{{ report.date_ja }}</p></header>
+  <header class="family-header">
+    <p class="eyebrow">{{ report.date_ja }}</p>
+    <h1>今日はこんな一日でした</h1>
+    <p class="lead">{{ report.overview }}</p>
+  </header>
 
-  {% if report.triage_summary.missing_count %}<p class="banner failed"><strong>一部判定欠落</strong> 未評価の{{ report.triage_summary.missing_count }}件は、安全のため要確認に含めています。</p>
-  {% elif report.triage_summary.failed %}<p class="banner failed"><strong>判定失敗</strong> 要確認の抽出ができませんでした。</p>
-  {% elif report.triage_summary.enabled and report.triage_summary.evaluated_count %}<p class="banner {% if report.triage_summary.attention_count %}flagged{% else %}clear{% endif %}"><strong>要確認 {{ report.triage_summary.attention_count }}件</strong> / 判定済み {{ report.triage_summary.evaluated_count }}件</p>{% endif %}
+  {% if report.triage_summary.missing_count %}
+  <p class="family-status gentle"><strong>一部の記録は、念のため確認対象に含めています。</strong></p>
+  {% elif report.triage_summary.failed %}
+  <p class="family-status gentle"><strong>一部の記録について、確認が必要かを十分に判断できませんでした。</strong> 詳細は「解析の詳細」から確認できます。</p>
+  {% elif not report.triage_summary.enabled %}
+  <p class="family-status gentle"><strong>今日は確認してほしい動画を自動で選んでいません。</strong> 一日の概要をご覧ください。</p>
+  {% elif report.attention_items %}
+  <p class="family-status attention-present"><strong>確認をお願いしたい動画が{{ report.attention_items | length }}件あります。</strong></p>
+  {% elif report.processing_summary.failed_count or report.processing_summary.unstable_skipped %}
+  <p class="family-status all-clear"><strong>確認できた範囲では、確認をお願いしたい動画はありませんでした。</strong></p>
+  {% else %}
+  <p class="family-status all-clear"><strong>確認をお願いしたい動画はありませんでした。</strong></p>
+  {% endif %}
 
-  <section><h2>本日の概要</h2><p>{{ report.overview }}</p></section>
-
-  {% if report.attention_items %}<section><h2>要確認</h2>
-  {% for item in report.attention_items %}<article class="attention"><h3>{% if item.recording_time_display %}{{ item.recording_time_display }}{% else %}録画時刻不明{% endif %}<span class="badge">異常度 {{ item.anomaly_score }}/10</span><span class="badge">{{ item.person_type_label }}</span></h3>{% if item.notable %}<p class="notable">{{ item.notable }}</p>{% endif %}<p>{{ item.assessment }}</p>{% if item.routine_explanation %}<p class="meta">普段との対応: {{ item.routine_explanation }}</p>{% endif %}<p class="meta">元動画: {{ item.source_file }}<br>イベントID: {{ item.event_id }}{% if item.related_event_ids %}<br>同じ出来事の関連動画: {{ item.related_event_ids | length }}件（{{ item.related_event_ids | join(', ') }}）{% endif %}</p>{% if item.video_url %}<p><a class="video-link" href="{{ item.video_url }}">動画を見る</a></p>{% endif %}</article>{% endfor %}
-  </section>{% elif report.triage_summary.enabled and report.triage_summary.evaluated_count and not report.triage_summary.failed %}<section><h2>要確認</h2><p>該当なし。判定済みのイベントはいずれも平常の範囲でした。</p></section>{% endif %}
-
-  {% if report.day_notes %}<section><h2>その日全体の所見</h2><ul>{% for note in report.day_notes %}<li>{{ note }}</li>{% endfor %}</ul></section>{% endif %}
-  {% if report.recurring_patterns %}<section><h2>全体に見られた様子</h2><ul>{% for item in report.recurring_patterns %}<li>{{ item }}</li>{% endfor %}</ul></section>{% endif %}
-
-  {% if report.time_periods %}<section><h2>時間帯別の様子</h2>{% for period in report.time_periods %}<article class="event"><h3>{{ period.label }}</h3><p>{{ period.summary }}</p></article>{% endfor %}</section>{% endif %}
-
-  {% if report.representative_events %}<section><h2>個別に記録された出来事</h2>
-  {% for event in report.representative_events %}<article class="event"><h3>{% if event.recording_time_display %}{{ event.recording_time_display }}ごろ{% else %}録画時刻不明{% endif %}</h3><p>{{ event.description }}</p><p class="meta">元動画: {{ event.source_file }}<br>イベントID: {{ event.event_id }}</p>{% if event.video_url %}<p><a class="video-link" href="{{ event.video_url }}">動画を見る</a></p>{% endif %}</article>{% endfor %}
-  </section>{% endif %}
-
-  <section><h2>解析状況</h2><div class="stats">
-    <div><strong>{{ report.processing_summary.video_files }}</strong>動画</div>
-    <div><strong>{{ report.processing_summary.event_json_count }}</strong>正常解析</div>
-    <div><strong>{{ report.processing_summary.cache_reused }}</strong>キャッシュ</div>
-    <div><strong>{{ report.processing_summary.unstable_skipped }}</strong>保留</div>
-    <div><strong>{{ report.processing_summary.failed_count }}</strong>失敗</div>
-  </div>
-  {% if report.processing_summary.failures %}<h3>解析できなかった動画</h3><table><thead><tr><th>録画時刻</th><th>元動画</th><th>エラー</th></tr></thead><tbody>{% for failure in report.processing_summary.failures %}<tr><td>{% if failure.recording_time_display %}{{ failure.recording_time_display }}{% else %}不明{% endif %}</td><td>{{ failure.source_file }}</td><td>{{ failure.error }}</td></tr>{% endfor %}</tbody></table>{% endif %}
+  {% if report.attention_items %}
+  <section class="attention-section">
+    <div class="section-heading">
+      <p class="section-number">1</p>
+      <div><h2>確認してほしい動画</h2><p>気になった理由を短くまとめています。</p></div>
+    </div>
+    {% for item in report.attention_items %}
+    <article class="family-attention">
+      <p class="event-time">{% if item.recording_time_display %}{{ item.recording_time_display }}{% else %}時刻不明{% endif %}</p>
+      {% if item.notable %}<h3>{{ item.notable }}</h3>{% else %}<h3>少し気になる動きがありました</h3>{% endif %}
+      {% if item.video_url %}
+      <video class="attention-video" controls preload="metadata" playsinline src="{{ item.video_url }}#t=0.1">
+        お使いのブラウザでは動画を再生できません。
+      </video>
+      {% endif %}
+      <h4>確認してほしい理由</h4>
+      <p>{{ item.assessment }}</p>
+      {% if item.video_url %}<p><a class="video-link" href="{{ item.video_url }}">動画を大きく見る</a></p>{% endif %}
+    </article>
+    {% endfor %}
   </section>
+  {% endif %}
+
+  <section>
+    <div class="section-heading">
+      <p class="section-number">{% if report.attention_items %}2{% else %}1{% endif %}</p>
+      <div><h2>今日の様子</h2><p>{{ report.event_count }}件の記録から、一日の流れをまとめました。</p></div>
+    </div>
+
+    {% if report.time_periods %}
+    <div class="period-list">
+      {% for period in report.time_periods %}
+      <article class="period"><h3>{{ period.label }}</h3><p>{{ period.summary }}</p></article>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p>時間帯による大きな変化は見られませんでした。</p>
+    {% endif %}
+
+    {% if report.day_notes %}
+    <div class="notice-card">
+      <h3>気づいたこと</h3>
+      <ul>{% for note in report.day_notes %}<li>{{ note }}</li>{% endfor %}</ul>
+    </div>
+    {% endif %}
+  </section>
+
+  {% if report.family_scenes %}
+  <section>
+    <div class="section-heading">
+      <p class="section-number">{% if report.attention_items %}3{% else %}2{% endif %}</p>
+      <div><h2>今日の場面</h2><p>一日の様子が伝わる場面を選びました。</p></div>
+    </div>
+    <div class="scene-grid">
+      {% for event in report.family_scenes %}
+      <article class="scene-card">
+        {% if event.video_url %}<video class="scene-preview" muted playsinline preload="metadata" src="{{ event.video_url }}#t=0.1" aria-label="{{ event.recording_time_display or '時刻不明' }}の動画プレビュー"></video>{% endif %}
+        <div class="scene-copy">
+          <h3>{% if event.recording_time_display %}{{ event.recording_time_display }}ごろ{% else %}時刻不明{% endif %}</h3>
+          <p>{{ event.description }}</p>
+          {% if event.video_url %}<a href="{{ event.video_url }}">この場面の動画を見る</a>{% endif %}
+        </div>
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  <section class="watch-note">
+    <p class="watch-note-label">今日の見守りメモ</p>
+    <p>{{ report.family_comment }}</p>
+    {% if not report.attention_items and report.triage_summary.enabled and not report.triage_summary.failed and not report.processing_summary.failed_count and not report.processing_summary.unstable_skipped %}<p>そのほかに、特に変わった出来事は見つかりませんでした。</p>{% endif %}
+  </section>
+
+  {% if report.processing_summary.failed_count or report.processing_summary.unstable_skipped %}
+  <aside class="recording-note">
+    <strong>日報に反映できなかった映像があります。</strong>
+    <span>必要な場合は「解析の詳細」から確認できます。</span>
+  </aside>
+  {% endif %}
+
+  <footer><a href="/report/{{ report.date }}/details">解析の詳細を見る</a></footer>
 </main>
 </body>
 </html>

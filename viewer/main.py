@@ -29,6 +29,7 @@ PERSON_TYPE_LABELS = {
     "unknown": "判別できない",
     "not_applicable": "人物なし",
 }
+WEEKDAY_LABELS = ("月", "火", "水", "木", "金", "土", "日")
 
 
 class ReportStore:
@@ -106,7 +107,10 @@ def _view_context(
     layout: Literal["nested", "flat"],
 ) -> dict[str, object]:
     payload = report.model_dump(mode="python")
-    payload["date_ja"] = f"{report.date.year}年{report.date.month}月{report.date.day}日"
+    weekday = WEEKDAY_LABELS[report.date.weekday()]
+    payload["date_ja"] = (
+        f"{report.date.year}年{report.date.month}月{report.date.day}日（{weekday}）"
+    )
     for collection in ("attention_items", "representative_events"):
         for item in payload[collection]:
             timestamp = item["recording_time"]
@@ -118,12 +122,35 @@ def _view_context(
         item["person_type_label"] = PERSON_TYPE_LABELS.get(
             item["person_type"], item["person_type"]
         )
+    attention_event_ids = {
+        item["event_id"] for item in payload["attention_items"]
+    }
+    payload["family_scenes"] = [
+        item
+        for item in payload["representative_events"]
+        if item["event_id"] not in attention_event_ids
+    ][:3]
+    payload["family_comment"] = _family_comment(report)
     for failure in payload["processing_summary"]["failures"]:
         timestamp = failure["recording_time"]
         failure["recording_time_display"] = (
             timestamp.strftime("%H:%M") if timestamp is not None else None
         )
     return payload
+
+
+def _family_comment(report: DailyReport) -> str:
+    """Build a calm closing line without inventing facts absent from the report."""
+
+    if report.recurring_patterns:
+        return report.recurring_patterns[0]
+    if report.attention_items:
+        return "お時間のあるときに、確認をお願いしたい動画をご覧ください。"
+    if report.event_count == 0:
+        return "今日はカメラものんびりできた一日だったようです。"
+    if report.event_count >= 8:
+        return "今日はカメラの前も、少しにぎやかな一日だったようです。"
+    return "今日もいつもの景色を、静かに見守りました。"
 
 
 def create_app(
@@ -166,8 +193,15 @@ def create_app(
     ) -> RedirectResponse:
         return RedirectResponse(f"/report/{report_date.isoformat()}", status_code=302)
 
-    @application.get("/report/{report_date}", include_in_schema=False)
-    def show_report(request: Request, report_date: date):
+    @application.get("/report/details", include_in_schema=False)
+    def select_report_details(
+        report_date: Annotated[date, Query(alias="date")],
+    ) -> RedirectResponse:
+        return RedirectResponse(
+            f"/report/{report_date.isoformat()}/details", status_code=302
+        )
+
+    def render_report(request: Request, report_date: date, template: str):
         try:
             report = store.load(report_date)
         except FileNotFoundError as exc:
@@ -182,13 +216,21 @@ def create_app(
         next_date = dates[position + 1] if position + 1 < len(dates) else None
         return templates.TemplateResponse(
             request=request,
-            name="report.html",
+            name=template,
             context={
                 "report": _view_context(report, layout=layout),
                 "previous_date": previous_date,
                 "next_date": next_date,
             },
         )
+
+    @application.get("/report/{report_date}", include_in_schema=False)
+    def show_report(request: Request, report_date: date):
+        return render_report(request, report_date, "report.html")
+
+    @application.get("/report/{report_date}/details", include_in_schema=False)
+    def show_report_details(request: Request, report_date: date):
+        return render_report(request, report_date, "report_detail.html")
 
     return application
 
