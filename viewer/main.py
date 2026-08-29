@@ -157,6 +157,7 @@ def _family_view_context(
 
     payload = family.model_dump(mode="python")
     payload.update(_date_fields(family.date))
+    payload["legacy_family_fallback"] = False
     for collection in ("attention_items", "scenes"):
         for item in payload[collection]:
             timestamp = item["recording_time"]
@@ -176,6 +177,7 @@ def _legacy_family_context(
     attention_ids = {item["event_id"] for item in detailed["attention_items"]}
     return {
         **_date_fields(report.date),
+        "legacy_family_fallback": True,
         "event_count": report.event_count,
         "overview": report.overview,
         "attention_items": [
