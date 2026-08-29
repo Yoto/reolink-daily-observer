@@ -6,7 +6,7 @@
 
 ## Prerequisites
 
-- Docker Desktop が起動し、Linux containers が利用できること
+- Docker Engine が起動していること
 - `docker compose version` が成功すること
 - OpenAI API を使う場合は専用 Project で発行した API key があること
 
@@ -14,20 +14,19 @@
 
 プロジェクトルートで次を実行します。
 
-```powershell
-Copy-Item -LiteralPath .env.example -Destination .env
-New-Item -ItemType Directory -Force -Path C:\reolink-analysis\output
-New-Item -ItemType Directory -Force -Path C:\reolink-analysis\state
-Copy-Item -LiteralPath config\scene.example.yaml -Destination config\scene.yaml
-notepad .env
-notepad config\scene.yaml
+```bash
+cp .env.example .env
+sudo install -d -o 10001 -g 10001 -m 0750 /srv/reolink-analysis/output /srv/reolink-analysis/state
+cp config/scene.example.yaml config/scene.yaml
+vi .env
+vi config/scene.yaml
 ```
 
 API key は `.env` の `OPENAI_API_KEY` にだけ保存してください。
 
 イメージを構築します。
 
-```powershell
+```bash
 docker compose --env-file .env build
 ```
 
@@ -35,13 +34,13 @@ docker compose --env-file .env build
 
 前日分を処理します。
 
-```powershell
+```bash
 docker compose --env-file .env run --rm analyzer
 ```
 
 日付を指定する場合:
 
-```powershell
+```bash
 docker compose --env-file .env run --rm analyzer --date 2026-08-16
 ```
 
@@ -51,7 +50,7 @@ cache を無視して明示的に再解析する場合だけ `--force` を追加
 
 通常の日次実行では event observation に Batch API を使用します。当日中に結果が必要な場合は `--sync` を付けて同期実行します。
 
-```powershell
+```bash
 docker compose --env-file .env run --rm analyzer --date 2026-08-16 --sync
 ```
 
@@ -61,7 +60,7 @@ docker compose --env-file .env run --rm analyzer --date 2026-08-16 --sync
 
 単一動画の解析は常に同期実行です。
 
-```powershell
+```bash
 docker compose --env-file .env run --rm analyzer analyze-video '/data/input/YYYY/MM/DD/Security camera_00_YYYYMMDDhhmmss.mp4'
 ```
 
@@ -70,11 +69,11 @@ prompt や scene の変更結果を素早く確認するときに使用します
 ## Outputs
 
 ```text
-C:\reolink-analysis\output\2026-08-16\
-├─ events\event_2026-08-16_<hash>.json
+/srv/reolink-analysis/output/2026-08-16/
+├─ events/event_2026-08-16_<hash>.json
 └─ daily_report.json
 
-C:\reolink-analysis\state\state.sqlite
+/srv/reolink-analysis/state/state.sqlite
 ```
 
 `daily_report.json` はcache、過去日報、viewerに共通するcanonicalな日報です。表示方法は [Daily report viewer](viewer.md) を参照してください。
@@ -137,6 +136,16 @@ CLI:   --sync
 
 ## Scheduled execution
 
+### Linux
+
+systemd timer と cron の例は次にあります。
+
+- `deploy/reolink-analyzer.service`
+- `deploy/reolink-analyzer.timer`
+- `deploy/crontab.example`
+
+systemd timer と cron はどちらか一方だけを使用してください。
+
 ### Windows Task Scheduler
 
 04:00 に前日分を処理する例です。
@@ -154,16 +163,6 @@ wrapper は `docker compose run --rm analyzer` を1回実行し、その終了�
 - Batch API を使わず即時実行: `-Sync`
 
 既定では Batch API の完了を待つため1回の実行が長時間続くことがあります。Task Scheduler 側に短い実行時間上限を設定しないでください。
-
-### Linux
-
-Linux 移行用の例は次にあります。
-
-- `deploy/reolink-analyzer.service`
-- `deploy/reolink-analyzer.timer`
-- `deploy/crontab.example`
-
-systemd timer と cron はどちらか一方だけを使用してください。
 
 ## Troubleshooting
 

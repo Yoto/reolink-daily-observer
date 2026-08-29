@@ -4,7 +4,7 @@
 # config/scene.yaml is git-ignored because the contents describe a household,
 # its vehicles, and its daily routine.
 #
-#   Copy-Item config/scene.example.yaml config/scene.yaml
+#   cp config/scene.example.yaml config/scene.yaml
 #
 # Every field is optional. Anything left blank is omitted from prompts, so a
 # partially filled file is fine — start with location and camera_view and add

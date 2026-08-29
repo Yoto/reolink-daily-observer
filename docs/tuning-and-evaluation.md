@@ -43,17 +43,17 @@ fixture は映像を含みませんが、家庭で観察された行動を含む
 
 次の例は、毎日の新聞配達を visitor として説明し、要確認へ出さないことを期待するケースです。`add` は API を呼びません。
 
-```powershell
-docker compose run --rm analyzer triage-eval add `
-  --event /data/output/2026-08-21/events/event_EXAMPLE.json `
-  --id newspaper-delivery-001 `
-  --description "早朝の定型的な新聞配達" `
-  --frequency daily `
-  --no-attention `
-  --person-type visitor `
-  --routine present `
-  --routine-contains "新聞配達" `
-  --notable absent `
+```bash
+docker compose run --rm analyzer triage-eval add \
+  --event /data/output/2026-08-21/events/event_EXAMPLE.json \
+  --id newspaper-delivery-001 \
+  --description "早朝の定型的な新聞配達" \
+  --frequency daily \
+  --no-attention \
+  --person-type visitor \
+  --routine present \
+  --routine-contains "新聞配達" \
+  --notable absent \
   --score-max 4
 ```
 
@@ -63,7 +63,7 @@ docker compose run --rm analyzer triage-eval add `
 
 現在の config、scene、triage prompt で全ケースを再評価します。
 
-```powershell
+```bash
 docker compose run --rm analyzer triage-eval run
 ```
 
@@ -73,8 +73,8 @@ docker compose run --rm analyzer triage-eval run
 
 CI などで結果を保存する場合:
 
-```powershell
-docker compose run --rm analyzer triage-eval run `
+```bash
+docker compose run --rm analyzer triage-eval run \
   --json-output /data/state/triage-eval-result.json
 ```
 

@@ -58,8 +58,7 @@ event ID、cache利用状況、処理エラーの詳細は表示しません。�
 analyzerの`ANALYZER_UMASK=0027`により、新しいreportはグループから読める一方で
 world-readableにはなりません。`.env`自体は`chmod 600 .env`で保護してください。
 
-Docker Desktopではbind mountのID変換がプラットフォーム側で処理されるため、既定IDを
-そのまま利用できます。
+Windows の Docker Desktop で実行する場合は、bind mount の ID 変換がプラットフォーム側で処理されるため、既定 ID をそのまま利用できます。
 
 ## Security boundary
 
