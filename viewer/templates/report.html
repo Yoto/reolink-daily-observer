@@ -104,7 +104,7 @@
     <div class="scene-grid">
       {% for event in report.family_scenes %}
       <article class="scene-card">
-        {% if event.video_url %}<video class="scene-preview" muted playsinline preload="metadata" src="{{ event.video_url }}#t=0.1" aria-label="{{ event.recording_time_display or '時刻不明' }}の動画プレビュー"></video>{% endif %}
+        {% if event.video_url %}<video class="scene-preview" muted playsinline preload="metadata" src="{{ event.video_url }}#t=5" aria-label="{{ event.recording_time_display or '時刻不明' }}の動画プレビュー"></video>{% endif %}
         <div class="scene-copy">
           <h3>{% if event.recording_time_display %}{{ event.recording_time_display }}ごろ{% else %}時刻不明{% endif %}</h3>
           <p>{{ event.description }}</p>

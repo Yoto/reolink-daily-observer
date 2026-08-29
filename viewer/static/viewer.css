@@ -60,7 +60,9 @@ th,td { padding:.6rem; border-bottom:1px solid var(--line); text-align:left; ver
 .family-attention .event-time { display:inline-block; margin:0 0 .5rem; padding:.15rem .65rem; border-radius:999px; background:#f1dfc8; color:#71502e; font-size:.9rem; font-weight:750; }
 .family-attention h3 { margin:.15rem 0 1rem; font-size:1.18rem; }
 .family-attention h4 { margin:1.1rem 0 .25rem; color:#5e4934; }
-.attention-video,.scene-preview { display:block; width:100%; aspect-ratio:16 / 9; border-radius:10px; background:#26302d; object-fit:cover; }
+.attention-video,.scene-preview { display:block; width:100%; height:auto; border-radius:10px; background:#26302d; object-fit:contain; }
+.attention-video { aspect-ratio:16 / 9; }
+.scene-preview { aspect-ratio:auto; }
 .family-report .video-link { padding:.55rem .9rem; border-color:#a9c2b8; background:#eef6f2; color:#264f45; text-decoration:none; }
 .period-list { border-top:1px solid #e7e1d8; }
 .period { display:grid; grid-template-columns:8rem 1fr; gap:1.25rem; padding:1rem 0; border-bottom:1px solid #e7e1d8; }
@@ -95,13 +97,13 @@ th,td { padding:.6rem; border-bottom:1px solid var(--line); text-align:left; ver
   .period { grid-template-columns:1fr; gap:.3rem; }
   .scene-grid { grid-template-columns:1fr; }
   .scene-card { display:grid; grid-template-columns:minmax(120px,42%) 1fr; }
-  .scene-card .scene-preview { height:100%; min-height:150px; aspect-ratio:auto; }
+  .scene-card .scene-preview { height:auto; min-height:0; aspect-ratio:auto; align-self:start; }
 }
 @media (max-width:430px) {
   .family-report .date-navigation { grid-template-columns:1fr 1fr; }
   .family-report .date-navigation form { width:100%; }
   .family-report .date-navigation input { min-width:0; width:100%; }
   .scene-card { display:block; }
-  .scene-card .scene-preview { min-height:0; aspect-ratio:16 / 9; }
+  .scene-card .scene-preview { height:auto; min-height:0; aspect-ratio:auto; }
 }
 @media print { body { background:white; } main { margin:0; border:0; box-shadow:none; max-width:none; } .date-navigation,.video-link { display:none; } }
