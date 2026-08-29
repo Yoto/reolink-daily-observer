@@ -57,14 +57,14 @@
     {% for item in report.attention_items %}
     <article class="family-attention">
       <p class="event-time">{% if item.recording_time_display %}{{ item.recording_time_display }}{% else %}時刻不明{% endif %}</p>
-      {% if item.notable %}<h3>{{ item.notable }}</h3>{% else %}<h3>少し気になる動きがありました</h3>{% endif %}
+      <h3>{{ item.title }}</h3>
       {% if item.video_url %}
       <video class="attention-video" controls preload="metadata" playsinline src="{{ item.video_url }}#t=0.1">
         お使いのブラウザでは動画を再生できません。
       </video>
       {% endif %}
       <h4>確認してほしい理由</h4>
-      <p>{{ item.assessment }}</p>
+      <p>{{ item.reason }}</p>
       {% if item.video_url %}<p><a class="video-link" href="{{ item.video_url }}">動画を大きく見る</a></p>{% endif %}
     </article>
     {% endfor %}
@@ -84,25 +84,18 @@
       {% endfor %}
     </div>
     {% else %}
-    <p>時間帯による大きな変化は見られませんでした。</p>
-    {% endif %}
-
-    {% if report.day_notes %}
-    <div class="notice-card">
-      <h3>気づいたこと</h3>
-      <ul>{% for note in report.day_notes %}<li>{{ note }}</li>{% endfor %}</ul>
-    </div>
+    <p>時間帯ごとのまとめはありません。</p>
     {% endif %}
   </section>
 
-  {% if report.family_scenes %}
+  {% if report.scenes %}
   <section>
     <div class="section-heading">
       <p class="section-number">{% if report.attention_items %}3{% else %}2{% endif %}</p>
       <div><h2>今日の場面</h2><p>一日の様子が伝わる場面を選びました。</p></div>
     </div>
     <div class="scene-grid">
-      {% for event in report.family_scenes %}
+      {% for event in report.scenes %}
       <article class="scene-card">
         {% if event.video_url %}<video class="scene-preview" muted playsinline preload="metadata" src="{{ event.video_url }}#t=5" aria-label="{{ event.recording_time_display or '時刻不明' }}の動画プレビュー"></video>{% endif %}
         <div class="scene-copy">
@@ -118,8 +111,7 @@
 
   <section class="watch-note">
     <p class="watch-note-label">今日の見守りメモ</p>
-    <p>{{ report.family_comment }}</p>
-    {% if not report.attention_items and report.triage_summary.enabled and not report.triage_summary.failed and not report.processing_summary.failed_count and not report.processing_summary.unstable_skipped %}<p>そのほかに、特に変わった出来事は見つかりませんでした。</p>{% endif %}
+    <p>{{ report.closing_comment }}</p>
   </section>
 
   {% if report.processing_summary.failed_count or report.processing_summary.unstable_skipped %}
