@@ -13,9 +13,9 @@
 `.env.example` を `.env` へコピーして編集します。
 
 ```dotenv
-CAMERA_INPUT_DIR=C:/reolink
-ANALYSIS_OUTPUT_DIR=C:/reolink-analysis/output
-ANALYSIS_STATE_DIR=C:/reolink-analysis/state
+CAMERA_INPUT_DIR=/srv/reolink
+ANALYSIS_OUTPUT_DIR=/srv/reolink-analysis/output
+ANALYSIS_STATE_DIR=/srv/reolink-analysis/state
 ANALYZER_UID=10001
 ANALYZER_GID=10001
 
@@ -27,9 +27,9 @@ ANALYZER_TMPFS_SIZE=4g
 LOG_LEVEL=INFO
 ```
 
-Windows のパスは `/` 区切りを推奨します。Docker Desktop では `ANALYZER_UID` / `ANALYZER_GID` の既定値をそのまま使えます。Linux へ移行する場合は専用実行ユーザーの `id -u` / `id -g` に合わせます。
+`ANALYZER_UID` / `ANALYZER_GID` は、Linux ホストの専用実行ユーザーに対する `id -u` / `id -g` の出力に合わせます。
 
-API key はチャット、ソースコード、YAML、PowerShell のコマンド引数へ書かず、ローカルの `.env` だけに保存してください。`.env` と `.env.*` は Git と Docker build context の除外対象です。
+API key はチャット、ソースコード、YAML、シェルのコマンド引数へ書かず、ローカルの `.env` だけに保存してください。`.env` と `.env.*` は Git と Docker build context の除外対象です。
 
 ## config.yaml
 
@@ -50,8 +50,8 @@ input:
 入力は次のどちらの日付レイアウトにも対応します。
 
 ```text
-C:\reolink\2026\08\16\*.mp4
-C:\reolink\2026-08-16\*.mp4
+/srv/reolink/2026/08/16/*.mp4
+/srv/reolink/2026-08-16/*.mp4
 ```
 
 ### Frame extraction
@@ -170,7 +170,7 @@ triage:
 
 別の場所へ置く場合は `ANALYZER_SCENE_FILE` で上書きできます。
 
-```powershell
+```bash
 docker compose --env-file .env run --rm -e ANALYZER_SCENE_FILE=/config/scene.local.yaml analyzer
 ```
 

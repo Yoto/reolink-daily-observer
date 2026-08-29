@@ -14,7 +14,7 @@ observation ──→ event JSON
               daily report
 ```
 
-既定の実行環境は Windows + Docker Desktop の Linux container です。入力 MP4 は read-only で mount し、移動・変更・削除しません。
+既定の実行環境は Linux + Docker Engine です。入力 MP4 は read-only で mount し、移動・変更・削除しません。
 
 詳しい設計は [docs/architecture.md](docs/architecture.md) を参照してください。
 
@@ -22,39 +22,38 @@ observation ──→ event JSON
 
 前提:
 
-- Docker Desktop が起動し、Linux containers が利用できること
+- Docker Engine が起動していること
 - `docker compose version` が成功すること
 - OpenAI API を使う場合は専用 Project で発行した API key があること
 
 初期設定:
 
-```powershell
-Copy-Item -LiteralPath .env.example -Destination .env
-Copy-Item -LiteralPath config\scene.example.yaml -Destination config\scene.yaml
-New-Item -ItemType Directory -Force -Path C:\reolink-analysis\output
-New-Item -ItemType Directory -Force -Path C:\reolink-analysis\state
-notepad .env
-notepad config\scene.yaml
+```bash
+cp .env.example .env
+cp config/scene.example.yaml config/scene.yaml
+sudo install -d -o 10001 -g 10001 -m 0750 /srv/reolink-analysis/output /srv/reolink-analysis/state
+vi .env
+vi config/scene.yaml
 ```
 
 `.env` で少なくとも入力・出力パスと `OPENAI_API_KEY` を確認してください。API key はソースコードや YAML へ書かず、ローカルの `.env` だけに保存します。
 
 イメージを構築します。
 
-```powershell
+```bash
 docker compose --env-file .env build
 ```
 
 前日分を処理します。
 
-```powershell
+```bash
 docker compose --env-file .env run --rm analyzer
 ```
 
 日報viewerを起動します。ブラウザから `http://localhost/`（ポートを変更した場合は
 `VIEWER_HTTP_PORT`）へアクセスしてください。
 
-```powershell
+```bash
 docker compose --env-file .env up -d viewer nginx
 ```
 
@@ -65,19 +64,19 @@ viewerは日報JSONだけをread-onlyで読み、MP4はnginxが直接配信し�
 
 日付指定:
 
-```powershell
+```bash
 docker compose --env-file .env run --rm analyzer --date 2026-08-16
 ```
 
 単一動画:
 
-```powershell
+```bash
 docker compose --env-file .env run --rm analyzer analyze-video '/data/input/YYYY/MM/DD/Security camera_00_YYYYMMDDhhmmss.mp4'
 ```
 
 Batch API を使わず、その場で結果を得る場合:
 
-```powershell
+```bash
 docker compose --env-file .env run --rm analyzer --date 2026-08-16 --sync
 ```
 
@@ -88,11 +87,11 @@ cache を無視して明示的に再解析する場合だけ `--force` を追加
 ## Output
 
 ```text
-C:\reolink-analysis\output\2026-08-16\
-├─ events\event_2026-08-16_<hash>.json
+/srv/reolink-analysis/output/2026-08-16/
+├─ events/event_2026-08-16_<hash>.json
 └─ daily_report.json
 
-C:\reolink-analysis\state\state.sqlite
+/srv/reolink-analysis/state/state.sqlite
 ```
 
 ## Documentation

@@ -8,7 +8,7 @@
 
 Python の依存関係を同期し、テストを実行します。
 
-```powershell
+```bash
 uv sync
 uv run pytest -W error
 ```
@@ -28,7 +28,7 @@ GENAI_MODEL=mock-observer-v1
 
 その後、通常と同じコマンドを実行します。
 
-```powershell
+```bash
 docker compose --env-file .env run --rm analyzer --date 2026-08-16
 ```
 
@@ -49,7 +49,7 @@ mock provider は Batch API に対応しないため、設定に関わらず同�
 
 コード変更後:
 
-```powershell
+```bash
 docker compose --env-file .env build
 ```
 
@@ -57,7 +57,7 @@ docker compose --env-file .env build
 
 triage prompt や scene を変更するときは、単発の目視確認だけでなく triage regression fixture を使用してください。
 
-```powershell
+```bash
 docker compose run --rm analyzer triage-eval run
 ```
 
@@ -69,7 +69,7 @@ docker compose run --rm analyzer triage-eval run
 
 1本の動画だけを同期解析できます。
 
-```powershell
+```bash
 docker compose --env-file .env run --rm analyzer analyze-video '/data/input/YYYY/MM/DD/Security camera_00_YYYYMMDDhhmmss.mp4'
 ```
 
