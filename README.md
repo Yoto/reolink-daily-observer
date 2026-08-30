@@ -60,6 +60,11 @@ docker compose --env-file .env up -d viewer nginx
 viewerは日報JSONだけをread-onlyで読み、MP4はnginxが直接配信します。FastAPIの
 8000番ポートはホストへ公開されません。
 
+フロントエンドを本番データで目視確認するときは、production checkoutを切り替えず、
+feature branchの別worktreeでpreview専用Composeを起動します。previewは既定で
+`http://127.0.0.1:8081/`に公開され、Analyzerを含みません。セットアップと安全な公開方法は
+[Frontend preview environment](docs/preview.md)を参照してください。
+
 ## Basic Usage
 
 日付指定:
@@ -104,6 +109,7 @@ cache を無視して明示的に再解析する場合だけ `--force` を追加
 | [Tuning and Evaluation](docs/tuning-and-evaluation.md) | 誤検知の改善方針、triage 回帰評価 |
 | [Development](docs/development.md) | ローカル開発、mock、テスト、再ビルド |
 | [Viewer](docs/viewer.md) | 日報UI、nginx、権限とセキュリティ設定 |
+| [Frontend preview](docs/preview.md) | 別worktreeと本番ROデータを使うUIレビュー環境 |
 | [scene-author](docs/scene-author.md) | 複数の実動画から scene 追加候補を作る補助コマンド |
 
 ## Privacy
