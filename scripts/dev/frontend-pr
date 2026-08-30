@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+branch="$(git symbolic-ref --quiet --short HEAD || true)"
+if [[ -z "$branch" || "$branch" != feature/* ]]; then
+  echo "frontend-pr must run from a feature/* branch" >&2
+  exit 1
+fi
+
+if [[ -n "$(git status --porcelain)" ]]; then
+  echo "worktree is not clean; commit the approved changes first" >&2
+  exit 1
+fi
+
+bash scripts/dev/frontend-check
+git push -u origin "$branch"
+
+if gh pr view "$branch" --json url --jq .url >/dev/null 2>&1; then
+  gh pr view "$branch" --json url --jq .url
+else
+  gh pr create --base main --head "$branch" --fill
+fi
