@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+branch="$(git symbolic-ref --quiet --short HEAD || true)"
+if [[ -z "$branch" || "$branch" != feature/* ]]; then
+  echo "frontend-cleanup must run from the completed feature/* branch" >&2
+  exit 1
+fi
+
+if [[ -n "$(git status --porcelain)" ]]; then
+  echo "worktree is not clean" >&2
+  exit 1
+fi
+
+merged_at="$(gh pr view "$branch" --json mergedAt --jq '.mergedAt // empty')"
+if [[ -z "$merged_at" ]]; then
+  echo "the pull request for $branch is not merged" >&2
+  exit 1
+fi
+
+bash scripts/dev/preview-down
+git fetch origin main
+git switch --detach origin/main
+git branch -d "$branch"
+
+if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+  git push origin --delete "$branch"
+fi
+
+printf 'cleaned up %s; workspace is detached at origin/main\n' "$branch"
