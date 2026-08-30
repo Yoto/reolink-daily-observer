@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+docker compose -f docker-compose.preview.yml config --quiet
+
+if command -v uv >/dev/null 2>&1; then
+  uv run --extra viewer --extra dev pytest
+elif python -c 'import pytest' >/dev/null 2>&1; then
+  python -m pytest
+else
+  echo "pytest is not available; install dev dependencies or uv" >&2
+  exit 1
+fi
