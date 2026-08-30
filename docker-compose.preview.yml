@@ -1,0 +1,78 @@
+name: reolink-preview
+
+# UI review stack. It intentionally contains no analyzer service and only
+# receives the production data that the viewer path actually needs.
+services:
+  viewer:
+    build:
+      context: .
+      dockerfile: Dockerfile.viewer
+    image: reolink-daily-observer-viewer:preview
+    user: "${VIEWER_UID:-10002}:${VIEWER_GID:-10002}"
+    group_add:
+      - "${ANALYSIS_GID:-10001}"
+    environment:
+      REPORT_OUTPUT_DIR: /data/output
+      CAMERA_DATE_LAYOUT: ${CAMERA_DATE_LAYOUT:-nested}
+    volumes:
+      - type: bind
+        source: ${ANALYSIS_OUTPUT_DIR}
+        target: /data/output
+        read_only: true
+    expose:
+      - "8000"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - frontend
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2).read()"]
+      interval: 30s
+      # A cold Python process can take more than three seconds to start on the
+      # low-power deployment host even after Uvicorn is ready.
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+
+  nginx:
+    image: nginxinc/nginx-unprivileged:1.30-alpine
+    user: "${NGINX_UID:-10003}:${NGINX_GID:-10003}"
+    group_add:
+      - "${CAMERA_GID:-10010}"
+    ports:
+      - "${PREVIEW_HTTP_HOST:-127.0.0.1}:${PREVIEW_HTTP_PORT:-8081}:8080"
+    volumes:
+      - type: bind
+        source: ./nginx/default.conf
+        target: /etc/nginx/conf.d/default.conf
+        read_only: true
+      - type: bind
+        source: ${CAMERA_INPUT_DIR}
+        target: /data/input
+        read_only: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - frontend
+    depends_on:
+      viewer:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+
+networks:
+  frontend:
