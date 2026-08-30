@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $# -ne 1 ]]; then
+  echo "usage: bash scripts/dev/frontend-start <short-name>" >&2
+  exit 2
+fi
+
+slug="$1"
+if [[ ! "$slug" =~ ^[a-z0-9][a-z0-9._-]*$ ]]; then
+  echo "short-name must use lowercase letters, digits, '.', '_' or '-'" >&2
+  exit 2
+fi
+
+if [[ -n "$(git status --porcelain)" ]]; then
+  echo "worktree is not clean; commit or stash changes before starting" >&2
+  exit 1
+fi
+
+branch="feature/$slug"
+git fetch origin main
+
+if git show-ref --verify --quiet "refs/heads/$branch" || git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+  echo "branch already exists: $branch" >&2
+  exit 1
+fi
+
+git switch --detach origin/main
+git switch -c "$branch" origin/main
+printf 'started %s from origin/main\n' "$branch"
