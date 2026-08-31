@@ -31,8 +31,8 @@ docker compose --env-file .env up -d --build viewer nginx
 docker compose --env-file .env stop nginx viewer
 ```
 
-`/`は利用可能な最新日へ移動します。`/report/YYYY-MM-DD`は家族向け日報を既定で
-表示し、画面上の前後リンクと日付入力から切り替えられます。家族向け日報は要確認動画、
+`/`は利用可能な最新日へ移動します。`/report/YYYY-MM-DD`は日報を既定で
+表示し、画面上の前後リンクと日付入力から切り替えられます。日報は要確認動画、
 一日の概要、時間帯別の様子、最大3件の「今日の場面」を中心に表示し、triageのスコア、
 event ID、cache利用状況、処理エラーの詳細は表示しません。要確認動画と「今日の場面」は
 元MP4をページへ埋め込み、別途thumbnailファイルは生成しません。
