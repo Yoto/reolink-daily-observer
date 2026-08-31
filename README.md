@@ -4,10 +4,10 @@
 
 ## 日報の例
 
-家族向け日報では、一日の概要と、確認してほしい動画・理由をまとめて表示します。
+日報では、一日の概要と、確認してほしい動画・理由をまとめて表示します。
 
 <p align="center">
-  <img src="docs/images/daily-report-example.jpg" alt="家族向け日報の画面例" width="360">
+  <img src="docs/images/daily-report-example.jpg" alt="日報の画面例" width="360">
 </p>
 
 ## 日報を表示するまで
