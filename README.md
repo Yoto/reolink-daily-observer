@@ -1,121 +1,100 @@
-# Reolink Daily Observer PoC
+# Reolink Daily Observer
 
-Reolink RLC-823S1 が FTP 転送した MP4 を日単位で観察し、1動画ごとの event JSON と、その日の `daily_report.json` を生成する PoC です。日報はFastAPI viewerがJSONから動的に表示します。
+防犯カメラは人物を検知して録画できても、増え続ける映像を毎日見返すには時間と手間がかかります。Reolink Daily Observer は、**カメラが人物を検知して録画した MP4 ファイル群を解析し、その日の日報を作成してブラウザに表示する**ためのシステムです。
 
-観察と判定を分離しており、event JSON は映像から直接確認できる事実だけを記録します。その後、画像を扱わない triage が event JSON、撮影場所の説明、過去の日報から住人が確認すべきイベントを抽出します。
+録画と人物検知はカメラ側に任せ、このシステムは FTP などで保存済みの動画を後から処理します。入力動画は変更せず、日常的な出来事を短くまとめ、住人が確認した方がよい場面を探しやすくします。
 
-```text
-MP4
- ↓
-observation ──→ event JSON
-                   ↓
-                 triage
-                   ↓
-              daily report
+```mermaid
+flowchart LR
+    Camera["人物検知・録画"] --> MP4["MP4を保存"]
+    MP4 --> Analyzer["映像を解析"]
+    Analyzer --> Report["日報を生成"]
+    Report --> Viewer["ブラウザで表示"]
 ```
 
-既定の実行環境は Linux + Docker Engine です。入力 MP4 は read-only で mount し、移動・変更・削除しません。
+analyzer は動画ごとに客観的な観察結果を event JSON として記録し、それらを撮影場所の説明や過去の日報と照合して `daily_report.json` を生成します。viewer は家族向けの日報を既定で表示し、必要に応じて解析の詳細や元動画も確認できます。処理の分離と判断方法は [Architecture](docs/architecture.md) を参照してください。
 
-詳しい設計は [docs/architecture.md](docs/architecture.md) を参照してください。
+## 日報を表示するまで
 
-## Quick Start
+### 前提
 
-前提:
+- Linux と Docker Engine / Docker Compose
+- カメラが人物検知時の MP4 をホストへ保存する仕組み
+- OpenAI API key
 
-- Docker Engine が起動していること
-- `docker compose version` が成功すること
-- OpenAI API を使う場合は専用 Project で発行した API key があること
+入力ディレクトリは `YYYY/MM/DD` と `YYYY-MM-DD` の日付構成に対応しています。OpenAI API の利用には料金が発生します。
 
-初期設定:
+### 1. 初期設定
 
 ```bash
+git clone https://github.com/Yoto/reolink-daily-observer.git
+cd reolink-daily-observer
+
 cp .env.example .env
 cp config/scene.example.yaml config/scene.yaml
-sudo install -d -o 10001 -g 10001 -m 0750 /srv/reolink-analysis/output /srv/reolink-analysis/state
-vi .env
-vi config/scene.yaml
+sudo install -d -o 10001 -g 10001 -m 0750   /srv/reolink-analysis/output /srv/reolink-analysis/state
 ```
 
-`.env` で少なくとも入力・出力パスと `OPENAI_API_KEY` を確認してください。API key はソースコードや YAML へ書かず、ローカルの `.env` だけに保存します。
+`.env` を編集し、少なくとも次を実環境に合わせます。
 
-イメージを構築します。
+- `CAMERA_INPUT_DIR`: カメラが保存した MP4 のルート
+- `ANALYSIS_OUTPUT_DIR` / `ANALYSIS_STATE_DIR`: 日報と処理状態の保存先
+- `OPENAI_API_KEY`: OpenAI API key
+- 各サービスの UID / GID
+
+`config/scene.yaml` には、必要に応じて撮影場所や普段の行動を個人名ではなく役割・振る舞いで記述します。詳しくは [Configuration](docs/configuration.md) を参照してください。
+
+### 2. イメージを構築する
 
 ```bash
 docker compose --env-file .env build
 ```
 
-前日分を処理します。
+### 3. 対象日の日報を作成する
+
+初回確認では、日付を指定して同期実行すると結果をその場で確認できます。
+
+```bash
+docker compose --env-file .env run --rm analyzer   --date YYYY-MM-DD --sync
+```
+
+通常の日次実行は次のコマンドで前日分を処理します。既定では画像解析に Batch API を使うため、完了まで時間がかかる場合があります。
 
 ```bash
 docker compose --env-file .env run --rm analyzer
 ```
 
-日報viewerを起動します。ブラウザから `http://localhost/`（ポートを変更した場合は
-`VIEWER_HTTP_PORT`）へアクセスしてください。
+### 4. viewer を起動する
 
 ```bash
 docker compose --env-file .env up -d viewer nginx
 ```
 
-viewerは日報JSONだけをread-onlyで読み、MP4はnginxが直接配信します。FastAPIの
-8000番ポートはホストへ公開されません。
+ブラウザで `http://localhost/` を開きます。`VIEWER_HTTP_PORT` を変更した場合は、そのポートを指定してください。
 
-フロントエンドを本番データで目視確認するときは、production checkoutを切り替えず、
-feature branchの別worktreeでpreview専用Composeを起動します。previewは既定で
-`http://127.0.0.1:8081/`に公開され、Analyzerを含みません。セットアップと安全な公開方法は
-[Frontend preview environment](docs/preview.md)を参照してください。
+## プライバシーと公開範囲
 
-## Basic Usage
+- 入力 MP4 は read-only でマウントし、移動・変更・削除しません。
+- OpenAI API へは、動画から抽出して縮小した JPEG と prompt、および event JSON、scene、日報履歴などのテキストを送信します。元の MP4 自体は直接送信しません。
+- MP4、event JSON、日報、SQLite、ログ、`config/scene.yaml` には、人物の行動や在宅状況などが含まれ得ます。機密データとして保護してください。
+- `.env` と `config/scene.yaml` は Git と Docker build context の除外対象ですが、強制追加や誤った公開までは防げません。
+- viewer には認証機能がありません。ルーターから直接インターネットへ公開せず、信頼できる LAN または VPN、Tailscale、WireGuard などの private network 内で利用してください。
 
-日付指定:
+送信データと権限設定の詳細は [Configuration: Privacy](docs/configuration.md#privacy) と [Viewer: Security boundary](docs/viewer.md#security-boundary) を参照してください。
 
-```bash
-docker compose --env-file .env run --rm analyzer --date 2026-08-16
-```
+## ライセンス
 
-単一動画:
+現時点でこのリポジトリには `LICENSE` ファイルを置いておらず、利用・改変・再配布を許可するライセンスを明示的に付与していません。依存ソフトウェアと外部 API には、それぞれの提供元のライセンスおよび利用規約が適用されます。
 
-```bash
-docker compose --env-file .env run --rm analyzer analyze-video '/data/input/YYYY/MM/DD/Security camera_00_YYYYMMDDhhmmss.mp4'
-```
+## ドキュメント
 
-Batch API を使わず、その場で結果を得る場合:
-
-```bash
-docker compose --env-file .env run --rm analyzer --date 2026-08-16 --sync
-```
-
-cache を無視して明示的に再解析する場合だけ `--force` を追加します。
-
-定期実行、Batch API の注意点、終了コード、トラブルシューティングは [docs/operations.md](docs/operations.md) を参照してください。
-
-## Output
-
-```text
-/srv/reolink-analysis/output/2026-08-16/
-├─ events/event_2026-08-16_<hash>.json
-└─ daily_report.json
-
-/srv/reolink-analysis/state/state.sqlite
-```
-
-## Documentation
-
-| Document | Purpose |
+| ドキュメント | 内容 |
 | --- | --- |
-| [Architecture](docs/architecture.md) | observation / triage / report の構造と設計理由 |
-| [Configuration](docs/configuration.md) | `.env`、`config.yaml`、`scene.yaml` の設定 |
-| [Operations](docs/operations.md) | 実行、Batch API、定期実行、障害対応 |
-| [Tuning and Evaluation](docs/tuning-and-evaluation.md) | 誤検知の改善方針、triage 回帰評価 |
-| [Development](docs/development.md) | ローカル開発、mock、テスト、再ビルド |
-| [Viewer](docs/viewer.md) | 日報UI、nginx、権限とセキュリティ設定 |
-| [Frontend preview](docs/preview.md) | 別worktreeと本番ROデータを使うUIレビュー環境 |
-| [scene-author](docs/scene-author.md) | 複数の実動画から scene 追加候補を作る補助コマンド |
-
-## Privacy
-
-このシステムは防犯カメラ映像と生活パターンを扱います。MP4、event JSON、daily report、state DB、ログ、`config/scene.yaml` は機密データとして扱ってください。
-
-`config/scene.yaml` は `.gitignore` と `.dockerignore` の対象ですが、scene の内容は triage 時に API へ送信されます。送信して差し支えない粒度で記述してください。
-
-API へ送信するデータや scene の詳しい取り扱いは [docs/configuration.md#privacy](docs/configuration.md#privacy) を参照してください。
+| [Architecture](docs/architecture.md) | システム構成、observation / triage / report の責務 |
+| [Configuration](docs/configuration.md) | `.env`、解析設定、private な scene、送信データ |
+| [Operations](docs/operations.md) | 日次実行、Batch API、定期実行、障害対応 |
+| [Viewer](docs/viewer.md) | 日報 UI、動画配信、権限とセキュリティ |
+| [Tuning and Evaluation](docs/tuning-and-evaluation.md) | 誤検知の改善方針と回帰評価 |
+| [Development](docs/development.md) | ローカル開発、mock、テスト |
+| [Frontend preview](docs/preview.md) | 本番データを read-only で使う UI レビュー環境 |
+| [scene-author](docs/scene-author.md) | 実動画から scene の追加候補を作る補助コマンド |
