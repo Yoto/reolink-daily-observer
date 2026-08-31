@@ -14,7 +14,7 @@ flowchart LR
     Report --> Viewer["ブラウザで表示"]
 ```
 
-analyzer は動画ごとに客観的な観察結果を event JSON として記録し、それらを撮影場所の説明や過去の日報と照合して `daily_report.json` を生成します。viewer は家族向けの日報を既定で表示し、必要に応じて解析の詳細や元動画も表示します。
+analyzer は動画ごとに客観的な観察結果を event JSON として記録し、それらを撮影場所の説明や過去の日報と照合して `daily_report.json` を生成します。viewer は日報を既定で表示し、必要に応じて解析の詳細や元動画も表示します。
 
 この文書では処理の構造と、各段を分離している理由を説明します。設定値は [configuration.md](configuration.md)、日々の実行方法は [operations.md](operations.md) を参照してください。
 
