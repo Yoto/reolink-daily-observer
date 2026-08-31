@@ -32,7 +32,7 @@ cd reolink-daily-observer
 
 cp .env.example .env
 cp config/scene.example.yaml config/scene.yaml
-sudo install -d -o 10001 -g 10001 -m 0750   /srv/reolink-analysis/output /srv/reolink-analysis/state
+sudo install -d -o 10001 -g 10001 -m 0750 /srv/reolink-analysis/output /srv/reolink-analysis/state
 ```
 
 `.env` を編集し、少なくとも次を実環境に合わせます。
@@ -55,7 +55,7 @@ docker compose --env-file .env build
 初回確認では、日付を指定して同期実行すると結果をその場で確認できます。
 
 ```bash
-docker compose --env-file .env run --rm analyzer   --date YYYY-MM-DD --sync
+docker compose --env-file .env run --rm analyzer --date YYYY-MM-DD --sync
 ```
 
 通常の日次実行は次のコマンドで前日分を処理します。既定では画像解析に Batch API を使うため、完了まで時間がかかる場合があります。
