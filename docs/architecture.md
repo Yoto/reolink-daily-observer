@@ -2,6 +2,20 @@
 
 Reolink Daily Observer は、Reolink RLC-823S1 が FTP 転送した MP4 を日単位で観察し、1動画ごとの event JSON と、その日の daily report を生成します。
 
+## System boundary
+
+録画と人物検知はカメラ側の責務です。このシステムは FTP などで保存済みの動画から処理を開始し、入力動画を変更しません。
+
+```mermaid
+flowchart LR
+    Camera["人物検知・録画"] --> MP4["MP4を保存"]
+    MP4 --> Analyzer["映像を解析"]
+    Analyzer --> Report["日報を生成"]
+    Report --> Viewer["ブラウザで表示"]
+```
+
+analyzer は動画ごとに客観的な観察結果を event JSON として記録し、それらを撮影場所の説明や過去の日報と照合して `daily_report.json` を生成します。viewer は家族向けの日報を既定で表示し、必要に応じて解析の詳細や元動画も表示します。
+
 この文書では処理の構造と、各段を分離している理由を説明します。設定値は [configuration.md](configuration.md)、日々の実行方法は [operations.md](operations.md) を参照してください。
 
 ## Design goals
