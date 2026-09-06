@@ -86,6 +86,16 @@ bash scripts/dev/frontend-pr
 
 Do not treat an implicit lack of objections as approval.
 
+After the PR has been created successfully, stop the review stack:
+
+```bash
+bash scripts/dev/preview-down
+```
+
+Confirm that no `reolink-preview` containers remain. This stops the temporary
+viewer and removes its network without changing the feature branch; keep that
+branch available for any requested review revisions until the PR is merged.
+
 ## Merge and clean up
 
 Merge only when requested or when the user's instruction clearly includes merging the approved PR. After the PR is merged, run:
