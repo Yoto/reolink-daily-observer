@@ -2,6 +2,8 @@
 
 この文書はローカル開発、テスト、mock provider、Docker image の更新ルールをまとめます。
 
+専用ユーザーで本番ホストと分離して開発する場合は、[rootless開発環境](rootless-development.md)を参照してください。
+
 システム構成は [architecture.md](architecture.md)、判定ロジックの回帰評価は [tuning-and-evaluation.md](tuning-and-evaluation.md) を参照してください。
 
 ## Local development
