@@ -94,3 +94,4 @@ docker compose --env-file .env up -d viewer nginx
 | [Development](docs/development.md) | ローカル開発、mock、テスト |
 | [Frontend preview](docs/preview.md) | 本番データを read-only で使う UI レビュー環境 |
 | [scene-author](docs/scene-author.md) | 実動画から scene の追加候補を作る補助コマンド |
+| [GitHub Actions CD](docs/github-actions-cd.md) | self-hosted runnerによる本番デプロイ |
