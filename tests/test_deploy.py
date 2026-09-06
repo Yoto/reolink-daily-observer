@@ -4,6 +4,8 @@ from contextlib import nullcontext
 import importlib.util
 import json
 from pathlib import Path
+import stat
+import subprocess
 from types import SimpleNamespace
 
 import pytest
@@ -145,3 +147,25 @@ def test_effective_user_must_be_reolink(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(deploy.pwd, "getpwuid", lambda _uid: SimpleNamespace(pw_name="gha-deploy"))
     with pytest.raises(deploy.DeploymentError, match="reolink user"):
         deploy.assert_running_as_reolink()
+
+
+def test_build_subprocess_uses_repository_cwd_and_private_failure_log(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    observed: dict[str, object] = {}
+    error_log = tmp_path / "deploy-last-error.log"
+
+    def fake_subprocess(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        observed.update(kwargs)
+        return subprocess.CompletedProcess(argv, 1, "build stdout", "build stderr")
+
+    monkeypatch.setattr(deploy, "ERROR_LOG", error_log)
+    monkeypatch.setattr(deploy, "REPOSITORY_PATH", tmp_path)
+    monkeypatch.setattr(deploy, "safe_env", lambda: {"PATH": "/usr/bin:/bin"})
+    monkeypatch.setattr(deploy.subprocess, "run", fake_subprocess)
+    with pytest.raises(deploy.DeploymentError, match="diagnostics"):
+        deploy.run_checked(deploy.compose_command(tmp_path, "build", "analyzer", "viewer"), failure_label="docker build")
+
+    assert observed["cwd"] == str(tmp_path)
+    assert stat.S_IMODE(error_log.stat().st_mode) == 0o600
+    assert "build stderr" in error_log.read_text(encoding="utf-8")
