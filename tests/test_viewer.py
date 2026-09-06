@@ -110,6 +110,7 @@ def test_root_redirects_to_latest_and_report_navigation(tmp_path: Path) -> None:
     assert 'href="/report/2026-08-27"' in page.text
     assert 'href="/report/2026-08-29/details"' in page.text
     assert "確認をお願いしたい動画が1件あります" in page.text
+    assert "今日はこんな一日でした" not in page.text
     assert "玄関前に人がいました。" in page.text
     assert 'src="/videos/2026/08/29/camera%20clip.mp4#t=5"' in page.text
     assert 'src="/videos/2026/08/29/routine%20clip.mp4#t=5"' in page.text
@@ -122,6 +123,12 @@ def test_root_redirects_to_latest_and_report_navigation(tmp_path: Path) -> None:
     assert "broken clip.mp4" not in page.text
     assert "ffprobe failed" not in page.text
     assert "日報に反映できなかった映像があります" in page.text
+    assert page.text.index('class="section-number">1') < page.text.index(
+        'class="section-number">2'
+    ) < page.text.index('class="section-number">3')
+    assert page.text.index("静かな一日でした。") < page.text.index(
+        "1件の記録から、一日の流れをまとめました。"
+    ) < page.text.index("朝はおおむね静かでした。")
 
     details = client.get("/report/2026-08-29/details")
     assert details.status_code == 200
@@ -147,6 +154,10 @@ def test_report_states_when_nothing_needs_attention(tmp_path: Path) -> None:
     assert "確認をお願いしたい動画はありませんでした" in page.text
     assert "そのほかに、特に変わった出来事は見つかりませんでした" in page.text
     assert "該当なし" not in page.text
+    assert page.text.index('class="section-number">1') < page.text.index(
+        "確認をお願いしたい動画はありませんでした"
+    ) < page.text.index('class="section-number">2')
+    assert 'class="section-number">3' in page.text
 
 
 def test_flat_camera_layout_changes_video_url(tmp_path: Path) -> None:
