@@ -116,6 +116,49 @@ def test_stale_fetched_sha_is_rejected_before_fast_forward(monkeypatch: pytest.M
         deploy.fetch_and_validate(tmp_path, "a" * 40)
 
 
+def test_fetch_refspec_is_repeatable_against_real_git(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    git = "/usr/bin/git"
+    env = {"HOME": str(tmp_path), "PATH": "/usr/bin:/bin", "GIT_TERMINAL_PROMPT": "0"}
+
+    def git_run(*args: str, cwd: Path | None = None) -> str:
+        result = subprocess.run(
+            [git, *args], cwd=str(cwd) if cwd else None, env=env, check=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        return result.stdout.strip()
+
+    origin = tmp_path / "origin.git"
+    source = tmp_path / "source"
+    production = tmp_path / "production"
+    git_run("init", "--bare", str(origin))
+    git_run("init", str(source))
+    git_run("-C", str(source), "config", "user.name", "test")
+    git_run("-C", str(source), "config", "user.email", "test@example.invalid")
+    (source / "tracked.txt").write_text("one\n", encoding="utf-8")
+    git_run("-C", str(source), "add", "tracked.txt")
+    git_run("-C", str(source), "commit", "-m", "one")
+    git_run("-C", str(source), "branch", "-M", "main")
+    git_run("-C", str(source), "remote", "add", "origin", str(origin))
+    git_run("-C", str(source), "push", "origin", "main")
+    git_run("clone", "--branch", "main", str(origin), str(production))
+
+    (source / "tracked.txt").write_text("two\n", encoding="utf-8")
+    git_run("-C", str(source), "commit", "-am", "two")
+    git_run("-C", str(source), "push", "origin", "main")
+    target_sha = git_run("-C", str(source), "rev-parse", "HEAD")
+    original_production_sha = git_run("-C", str(production), "rev-parse", "HEAD")
+
+    monkeypatch.setattr(deploy, "REPOSITORY_URL", str(origin))
+    monkeypatch.setattr(deploy, "safe_env", lambda: env)
+    deploy.fetch_and_validate(production, target_sha)
+    deploy.fetch_and_validate(production, target_sha)
+
+    assert git_run("-C", str(production), "rev-parse", "refs/remotes/cd/main") == target_sha
+    assert git_run("-C", str(production), "rev-parse", "HEAD") == original_production_sha
+
+
 def test_ci_failure_prevents_checkout_update_and_docker(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     calls: list[list[str]] = []
     updated = False
