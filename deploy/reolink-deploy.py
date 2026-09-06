@@ -219,10 +219,9 @@ def fetch_and_validate(repo: Path, requested_sha: str) -> None:
             str(repo),
             "fetch",
             "--no-tags",
-            "--prune",
             "--force",
             REPOSITORY_URL,
-            "main:refs/remotes/cd/main",
+            "refs/heads/main:refs/remotes/cd/main",
         ],
         cwd=repo,
     )
