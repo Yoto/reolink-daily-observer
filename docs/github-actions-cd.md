@@ -31,6 +31,11 @@ Ignored production `.env` and `config/scene.yaml` remain in place. Build
 failure stops before `up`; there is no automatic rollback, and the checkout
 may already have advanced to the requested tested commit.
 
+Command stdout/stderr is kept out of the Actions log. On a failed fixed
+command, the helper writes private diagnostics to
+`/var/lib/reolink/deploy-last-error.log` with mode 0600 for administrator
+inspection.
+
 ## One-time installation
 
 Review the files in `deploy/`, then as `root` run:

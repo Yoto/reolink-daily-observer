@@ -29,6 +29,7 @@ LOCK_PATH = REPOSITORY_PATH / ".deploy.lock"
 DOCKER = "/usr/bin/docker"
 GIT = "/usr/bin/git"
 DOCKER_SOCKET = "unix:///var/run/docker.sock"
+ERROR_LOG = Path("/var/lib/reolink/deploy-last-error.log")
 SHA_PATTERN = re.compile(r"[0-9a-f]{40}\Z")
 
 
@@ -49,6 +50,28 @@ class DeploymentError(RuntimeError):
     """An expected, user-actionable deployment failure."""
 
 
+def record_failure(label: str, returncode: int, stdout: str, stderr: str) -> None:
+    """Keep failed command output private for the administrator to inspect."""
+
+    try:
+        fd = os.open(ERROR_LOG, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            os.fchmod(fd, 0o600)
+            stream = os.fdopen(fd, "w", encoding="utf-8")
+            fd = -1
+            with stream:
+                stream.write(
+                    f"stage: {label}\nexit: {returncode}\n\nstdout:\n{stdout}\nstderr:\n{stderr}"
+                )
+        finally:
+            if fd != -1:
+                os.close(fd)
+    except OSError:
+        # The public error remains safe and actionable even if diagnostics
+        # cannot be written (for example, during early installation).
+        pass
+
+
 def validate_sha(value: str) -> str:
     if not SHA_PATTERN.fullmatch(value):
         raise DeploymentError("commit SHA must be exactly 40 lowercase hexadecimal characters")
@@ -64,9 +87,10 @@ def run_checked(
 ) -> str:
     """Run a fixed executable with a clean environment and hide command output."""
 
+    effective_cwd = cwd or REPOSITORY_PATH
     completed = subprocess.run(
         list(argv),
-        cwd=str(cwd) if cwd else None,
+        cwd=str(effective_cwd),
         env=safe_env(),
         check=False,
         stdout=subprocess.PIPE,
@@ -75,7 +99,8 @@ def run_checked(
     )
     if completed.returncode:
         label = failure_label or (Path(completed.args[0]).name if completed.args else "command")
-        raise DeploymentError(f"{label} failed (exit {completed.returncode})")
+        record_failure(label, completed.returncode, completed.stdout, completed.stderr)
+        raise DeploymentError(f"{label} failed; diagnostics at {ERROR_LOG}")
     return completed.stdout if allow_output else ""
 
 
@@ -160,11 +185,16 @@ def compose_command(repo: Path, *args: str) -> list[str]:
 def preflight(repo: Path, requested_sha: str) -> None:
     if not repo.is_dir():
         raise DeploymentError("production checkout does not exist")
-    branch = run_checked([GIT, "-C", str(repo), "symbolic-ref", "--quiet", "--short", "HEAD"], allow_output=True).strip()
+    branch = run_checked(
+        [GIT, "-C", str(repo), "symbolic-ref", "--quiet", "--short", "HEAD"],
+        cwd=repo,
+        allow_output=True,
+    ).strip()
     if branch != "main":
         raise DeploymentError("production checkout is not on main")
     dirty = run_checked(
         [GIT, "-C", str(repo), "status", "--porcelain=v1", "--untracked-files=no", "--ignore-submodules=all"],
+        cwd=repo,
         allow_output=True,
     ).strip()
     if dirty:
@@ -174,6 +204,7 @@ def preflight(repo: Path, requested_sha: str) -> None:
 def ensure_target_safe(repo: Path, requested_sha: str) -> None:
     tracked_sensitive = run_checked(
         [GIT, "-C", str(repo), "ls-tree", "-r", "--name-only", requested_sha, "--", ".env", "config/scene.yaml"],
+        cwd=repo,
         allow_output=True,
     ).splitlines()
     if set(tracked_sensitive) & {".env", "config/scene.yaml"}:
@@ -192,16 +223,18 @@ def fetch_and_validate(repo: Path, requested_sha: str) -> None:
             "--force",
             REPOSITORY_URL,
             "main:refs/remotes/cd/main",
-        ]
+        ],
+        cwd=repo,
     )
     fetched = run_checked(
-        [GIT, "-C", str(repo), "rev-parse", "refs/remotes/cd/main^{commit}"], allow_output=True
+        [GIT, "-C", str(repo), "rev-parse", "refs/remotes/cd/main^{commit}"], cwd=repo, allow_output=True
     ).strip()
     if fetched != requested_sha:
         raise DeploymentError("requested SHA is not the current fetched main commit")
     ancestor = subprocess.run(
         [GIT, "-C", str(repo), "merge-base", "--is-ancestor", "HEAD", requested_sha],
         env=safe_env(),
+        cwd=str(repo),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         check=False,
@@ -216,15 +249,16 @@ def update_checkout(repo: Path, requested_sha: str) -> None:
     # advancing the checkout so this step cannot execute checkout-provided code.
     run_checked(
         [GIT, "-C", str(repo), "-c", "core.hooksPath=/dev/null", "merge", "--ff-only", requested_sha],
+        cwd=repo,
         failure_label="git fast-forward",
     )
-    deployed = run_checked([GIT, "-C", str(repo), "rev-parse", "HEAD"], allow_output=True).strip()
+    deployed = run_checked([GIT, "-C", str(repo), "rev-parse", "HEAD"], cwd=repo, allow_output=True).strip()
     if deployed != requested_sha:
         raise DeploymentError("production checkout did not reach the requested SHA")
 
 
 def check_services(repo: Path) -> None:
-    raw = run_checked(compose_command(repo, "ps", "--format", "json", "viewer", "nginx"), allow_output=True)
+    raw = run_checked(compose_command(repo, "ps", "--format", "json", "viewer", "nginx"), cwd=repo, allow_output=True)
     try:
         parsed: Any = json.loads(raw)
     except json.JSONDecodeError:
@@ -261,9 +295,10 @@ def deploy(
         # Keep this as one build transaction.  If it fails, up is never run;
         # the checkout may already have advanced and is intentionally left so
         # the operator can inspect the failed build and retry the same SHA.
-        run_checked(compose_command(repo, "build", "analyzer", "viewer"), failure_label="docker build")
+        run_checked(compose_command(repo, "build", "analyzer", "viewer"), cwd=repo, failure_label="docker build")
         run_checked(
             compose_command(repo, "up", "-d", "--wait", "--wait-timeout", "120", "viewer", "nginx"),
+            cwd=repo,
             failure_label="docker up",
         )
         check_services(repo)
