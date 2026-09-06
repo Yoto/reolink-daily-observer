@@ -23,6 +23,37 @@ Use the existing fixed Codex/development worktree. Do not create a new worktree 
 
 Make the requested change on the feature branch. Keep the change scoped to the request; do not add speculative hardening or generalized infrastructure.
 
+## Configure the preview
+
+Use the existing `.env.preview` values when available. The helper scripts inherit
+environment variables; they do not select that file themselves. Load the file
+before running a helper, or export the required values explicitly.
+
+```bash
+set -a; source .env.preview; set +a
+```
+
+Keep the analysis-output and camera-input mounts read-only. For a visual-only
+review, prefer repository fixtures over production data.
+
+Before starting, check whether the default preview port is already in use. If
+it is, choose an unused local port and set `PREVIEW_HTTP_PORT` for the preview
+command; do not stop another preview to reclaim its port.
+
+If a fixture returns a viewer 500, inspect the viewer log and the mount's
+ownership from inside the container. Match the preview's non-root UID/GID to
+the fixture's readable ownership or group; do not change fixture permissions
+or make the container root just to run a review.
+
+Keep `PREVIEW_HTTP_HOST=127.0.0.1` by default. For LAN review, obtain explicit
+approval before exposing report or video data, find an address assigned to the
+host (not the reviewer's source address), and bind only to that host address.
+State the resulting URL and that other LAN devices may be able to access it.
+
+```bash
+ip -4 -brief address
+```
+
 Run:
 
 ```bash
