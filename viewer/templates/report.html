@@ -30,9 +30,13 @@
 
   <header class="family-header">
     <p class="eyebrow">{{ report.date_ja }}</p>
-    <h1>今日はこんな一日でした</h1>
-    <p class="lead">{{ report.overview }}</p>
   </header>
+
+  <section class="attention-section">
+    <div class="section-heading">
+      <p class="section-number">1</p>
+      <div><h2>確認してほしい動画</h2><p>気になった理由を短くまとめています。</p></div>
+    </div>
 
   {% if report.triage_summary.missing_count %}
   <p class="family-status gentle"><strong>一部の記録は、念のため確認対象に含めています。</strong></p>
@@ -49,11 +53,6 @@
   {% endif %}
 
   {% if report.attention_items %}
-  <section class="attention-section">
-    <div class="section-heading">
-      <p class="section-number">1</p>
-      <div><h2>確認してほしい動画</h2><p>気になった理由を短くまとめています。</p></div>
-    </div>
     {% for item in report.attention_items %}
     <article class="family-attention">
       <p class="event-time">{% if item.recording_time_display %}{{ item.recording_time_display }}{% else %}時刻不明{% endif %}</p>
@@ -67,14 +66,16 @@
       <p>{{ item.reason }}</p>
     </article>
     {% endfor %}
-  </section>
   {% endif %}
+  </section>
 
   <section>
     <div class="section-heading">
-      <p class="section-number">{% if report.attention_items %}2{% else %}1{% endif %}</p>
-      <div><h2>今日の様子</h2><p>{{ report.event_count }}件の記録から、一日の流れをまとめました。</p></div>
+      <p class="section-number">2</p>
+      <div><h2>今日の様子</h2></div>
     </div>
+    <p class="lead">{{ report.overview }}</p>
+    <p class="section-description">{{ report.event_count }}件の記録から、一日の流れをまとめました。</p>
 
     {% if report.time_periods %}
     <div class="period-list">
@@ -90,7 +91,7 @@
   {% if report.scenes %}
   <section>
     <div class="section-heading">
-      <p class="section-number">{% if report.attention_items %}3{% else %}2{% endif %}</p>
+      <p class="section-number">3</p>
       <div><h2>今日の場面</h2><p>一日の様子が伝わる場面を選びました。</p></div>
     </div>
     <div class="scene-grid">

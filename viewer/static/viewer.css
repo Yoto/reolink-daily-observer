@@ -43,18 +43,19 @@ th,td { padding:.6rem; border-bottom:1px solid var(--line); text-align:left; ver
 .family-report .date-navigation a { font-weight:650; text-decoration:none; }
 .family-report input,.family-report button { border:1px solid #cfc8bd; border-radius:7px; background:white; }
 .family-report button { cursor:pointer; color:#315b52; font-weight:650; }
-.family-header { padding:3.4rem 0 1rem; }
-.family-header .eyebrow { margin:0 0 .65rem; color:#756d61; font-size:.93rem; font-weight:650; letter-spacing:.04em; }
-.family-header h1 { margin:0 0 1.1rem; color:#274b43; font-family:"Yu Mincho","Hiragino Mincho ProN",serif; font-size:2.15rem; line-height:1.4; }
-.family-header .lead { margin:0; font-size:1.07rem; line-height:1.9; }
+.family-header { padding:3.4rem 0 0; }
+.family-header .eyebrow { margin:0 0 .65rem; color:#756d61; font-size:1.5rem; font-weight:650; letter-spacing:.04em; }
+.family-report .lead { margin:0; font-size:1.07rem; line-height:1.9; }
 .family-status { margin:1rem 0 2.75rem; padding:1rem 1.1rem; border-radius:12px; }
 .family-status.all-clear { border:1px solid #bfd8cb; background:#f0f7f3; color:#315e4d; }
 .family-status.attention-present { border:1px solid #e0c7a6; background:#fff8ed; color:#77502c; }
 .family-status.gentle { border:1px solid #d9cbb9; background:#faf6f0; color:#675747; }
 .family-report section { margin-top:3rem; }
+.family-report .attention-section { margin-top:1.5rem; }
 .family-report h2 { margin:0; padding:0; border:0; color:#274b43; font-size:1.5rem; }
 .section-heading { display:flex; align-items:flex-start; gap:.9rem; margin-bottom:1.25rem; }
 .section-heading p { margin:.25rem 0 0; color:#756d61; }
+.section-description { margin:.25rem 0 1.25rem; color:#756d61; }
 .section-number { display:grid; flex:0 0 2rem; width:2rem; height:2rem; place-items:center; margin:0 !important; border-radius:50%; background:#dce9e3; color:#315b52 !important; font-weight:750; }
 .family-attention { margin:1rem 0; padding:1.25rem; border:1px solid #ead9c3; border-radius:14px; background:#fffbf5; }
 .family-attention .event-time { display:inline-block; margin:0 0 .5rem; padding:.15rem .65rem; border-radius:999px; background:#f1dfc8; color:#71502e; font-size:.9rem; font-weight:750; }
@@ -93,7 +94,6 @@ th,td { padding:.6rem; border-bottom:1px solid var(--line); text-align:left; ver
   .topbar { margin:0 -20px; padding:0 20px; }
   .family-report .date-navigation { margin:0 -20px; padding:1rem 20px; }
   .family-header { padding-top:2.6rem; }
-  .family-header h1 { font-size:1.8rem; }
   .period { grid-template-columns:1fr; gap:.3rem; }
   .scene-grid { grid-template-columns:1fr; }
   .scene-card { display:grid; grid-template-columns:minmax(120px,42%) 1fr; }
