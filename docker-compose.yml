@@ -11,7 +11,7 @@ services:
     environment:
       CONFIG_PATH: /config/config.yaml
       GENAI_PROVIDER: ${GENAI_PROVIDER:-openai}
-      GENAI_MODEL: ${GENAI_MODEL:-gpt-5.6-luna}
+      GENAI_MODEL: ${GENAI_MODEL:-gpt-6-luna}
       GENAI_BATCH_ENABLED: ${GENAI_BATCH_ENABLED:-true}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}

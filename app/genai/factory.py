@@ -42,8 +42,8 @@ def create_provider(settings: Any) -> GenAIProvider:
         timeout_sec=float(_value(genai, "request_timeout_sec", 180)),
         max_attempts=int(_value(retry, "max_attempts", 4)),
         max_output_tokens=int(_value(genai, "max_output_tokens", 8192)),
-        input_cost_per_million=_value(pricing, "input_per_million_tokens", 0.20),
-        output_cost_per_million=_value(pricing, "output_per_million_tokens", 1.20),
+        input_cost_per_million=_value(pricing, "input_per_million_tokens", 0.10),
+        output_cost_per_million=_value(pricing, "output_per_million_tokens", 0.50),
         batch=_batch_options(_value(genai, "batch", None)),
         temp_dir=_value(paths, "temp", None),
     )
