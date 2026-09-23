@@ -20,7 +20,7 @@ ANALYZER_UID=10001
 ANALYZER_GID=10001
 
 GENAI_PROVIDER=openai
-GENAI_MODEL=gpt-5.6-luna
+GENAI_MODEL=gpt-6-luna
 OPENAI_API_KEY=replace-with-your-openai-api-key
 GENAI_BATCH_ENABLED=true
 ANALYZER_TMPFS_SIZE=4g
@@ -28,6 +28,8 @@ LOG_LEVEL=INFO
 ```
 
 `ANALYZER_UID` / `ANALYZER_GID` は、Linux ホストの専用実行ユーザーに対する `id -u` / `id -g` の出力に合わせます。
+
+既存の `.env` に `GENAI_MODEL=gpt-5.6-luna` が残っている場合、`config/config.yaml` の変更より `.env` が優先されます。GPT-6 Luna へ切り替える際は、デプロイ先の `.env` も `GENAI_MODEL=gpt-6-luna` に更新してください。料金見積りの単価も GPT-6 Luna 用です。
 
 API key はチャット、ソースコード、YAML、シェルのコマンド引数へ書かず、ローカルの `.env` だけに保存してください。`.env` と `.env.*` は Git と Docker build context の除外対象です。
 
@@ -93,7 +95,7 @@ frames:
 ```yaml
 genai:
   provider: openai
-  model: gpt-5.6-luna
+  model: gpt-6-luna
   max_inline_image_bytes: 13000000
   chunk_overlap_frames: 2
   request_timeout_sec: 180

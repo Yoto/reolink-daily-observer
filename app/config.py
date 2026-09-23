@@ -176,7 +176,7 @@ class PricingSettings(SettingsModel):
 
 class GenAISettings(SettingsModel):
     provider: NonEmpty = "openai"
-    model: NonEmpty = "gpt-5.6-luna"
+    model: NonEmpty = "gpt-6-luna"
     api_key: SecretStr | None = Field(default=None, repr=False)
     max_images_per_request: Literal["auto"] | int = "auto"
     max_inline_image_bytes: int = Field(default=13_000_000, gt=0)

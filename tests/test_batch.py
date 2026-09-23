@@ -28,11 +28,11 @@ def _provider(tmp_path: Path, **batch: Any) -> OpenAIProvider:
     options.update(batch)
     provider = OpenAIProvider(
         api_key="not-a-real-api-key",
-        model="gpt-5.6-luna",
+        model="gpt-6-luna",
         max_attempts=1,
         max_output_tokens=4096,
-        input_cost_per_million=0.20,
-        output_cost_per_million=1.20,
+        input_cost_per_million=0.10,
+        output_cost_per_million=0.50,
         batch=BatchOptions(**options),
         temp_dir=tmp_path / "temp",
     )
@@ -53,7 +53,7 @@ def _output_line(custom_id: str, *, label: str = "ok") -> str:
                 "status_code": 200,
                 "body": {
                     "id": f"resp_{custom_id}",
-                    "model": "gpt-5.6-luna",
+                    "model": "gpt-6-luna",
                     "output": [
                         {
                             "type": "message",
@@ -141,7 +141,7 @@ def test_batch_body_carries_the_same_content_as_a_synchronous_request(
     shards = write_shards(
         [_request("event-c001", (FrameInput(path=frame, timestamp_sec=1.25),))],
         workspace,
-        model="gpt-5.6-luna",
+        model="gpt-6-luna",
         max_output_tokens=4096,
         max_requests=50,
         max_bytes=10_000_000,
@@ -151,7 +151,7 @@ def test_batch_body_carries_the_same_content_as_a_synchronous_request(
     assert line["custom_id"] == "event-c001"
     assert line["url"] == "/v1/responses"
     body = line["body"]
-    assert body["model"] == "gpt-5.6-luna"
+    assert body["model"] == "gpt-6-luna"
     assert body["max_output_tokens"] == 4096
     assert body["store"] is False
     assert body["text"]["format"]["type"] == "json_schema"
@@ -206,8 +206,8 @@ def test_batch_run_uploads_polls_and_halves_the_cost_estimate(tmp_path: Path) ->
     usage = outcomes["a"].usage
     assert usage.input_tokens == 1000
     assert usage.output_tokens == 100
-    # Half of the 0.00032 a synchronous request would have cost.
-    assert usage.estimated_cost == 0.00016
+    # Half of the 0.00015 a synchronous request would have cost.
+    assert usage.estimated_cost == 0.000075
     assert usage.details["batch"] is True
     assert usage.details["batch_id"] == "batch_1"
     assert usage.details["cached_input_tokens"] == 50

@@ -10,11 +10,11 @@ from app.genai.openai import OpenAIProvider
 
 def test_usage_maps_responses_api_metadata_without_a_live_request() -> None:
     provider = object.__new__(OpenAIProvider)
-    provider._input_cost = 0.20
-    provider._output_cost = 1.20
+    provider._input_cost = 0.10
+    provider._output_cost = 0.50
     response = SimpleNamespace(
         id="resp_test",
-        model="gpt-5.6-luna",
+        model="gpt-6-luna",
         usage=SimpleNamespace(
             input_tokens=1000,
             output_tokens=100,
@@ -29,7 +29,7 @@ def test_usage_maps_responses_api_metadata_without_a_live_request() -> None:
     assert usage.input_tokens == 1000
     assert usage.output_tokens == 100
     assert usage.total_tokens == 1100
-    assert usage.estimated_cost == 0.00032
+    assert usage.estimated_cost == 0.00015
     assert usage.details["response_id"] == "resp_test"
 
 
@@ -44,7 +44,7 @@ def test_generate_structured_sends_timestamped_data_url(tmp_path) -> None:
             captured.update(kwargs)
             return SimpleNamespace(
                 id="resp_test",
-                model="gpt-5.6-luna",
+                model="gpt-6-luna",
                 output_parsed=Result(label="ok"),
                 usage=None,
             )
@@ -53,7 +53,7 @@ def test_generate_structured_sends_timestamped_data_url(tmp_path) -> None:
     frame.write_bytes(b"jpeg")
     provider = OpenAIProvider(
         api_key="not-a-real-api-key",
-        model="gpt-5.6-luna",
+        model="gpt-6-luna",
         max_attempts=1,
     )
     provider._client = SimpleNamespace(responses=Responses())
