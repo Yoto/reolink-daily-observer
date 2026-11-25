@@ -12,7 +12,7 @@ Type=oneshot
 User=reolink
 Group=reolink
 WorkingDirectory=/opt/reolink-analyzer
-ExecStart=/usr/bin/flock /opt/reolink-analyzer/.deploy.lock /usr/bin/docker -H unix:///var/run/docker.sock compose --project-directory /opt/reolink-analyzer --env-file /opt/reolink-analyzer/.env -f /opt/reolink-analyzer/docker-compose.yml run --rm analyzer
+ExecStart=/usr/bin/flock /opt/reolink-analyzer/.deploy.lock /opt/reolink-analyzer/scripts/run-scheduled.sh
 UMask=0027
 
 # The lock is shared with the root-owned deployment helper. The dedicated

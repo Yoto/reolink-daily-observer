@@ -10,5 +10,5 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 CRON_TZ=Asia/Tokyo
 TZ=Asia/Tokyo
 
-# Start one one-shot container at 04:00.
-0 4 * * * umask 077; cd /opt/reolink-analyzer && /usr/bin/docker compose --env-file .env run --rm analyzer >> /srv/reolink-analysis/reolink-analyzer.log 2>&1
+# Run analysis and then the opt-in retention command under the deployment lock.
+0 4 * * * umask 077; /usr/bin/flock /opt/reolink-analyzer/.deploy.lock /opt/reolink-analyzer/scripts/run-scheduled.sh >> /srv/reolink-analysis/reolink-analyzer.log 2>&1

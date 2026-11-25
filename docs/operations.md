@@ -78,6 +78,37 @@ prompt や scene の変更結果を素早く確認するときに使用します
 
 `daily_report.json` はcache、過去日報、viewerに共通するcanonicalな日報です。表示方法は [Daily report viewer](viewer.md) を参照してください。
 
+## Source retention
+
+保持期限を有効にする前に、削除候補をdry-runで確認します。
+
+```bash
+RETENTION_ENABLED=true docker compose --env-file .env run --rm retention retention --dry-run
+```
+
+結果にはcutoff、対象日数、ファイル数、容量、処理未完了でskipした日数が出ます。
+想定どおりなら `.env` を更新します。
+
+```dotenv
+RETENTION_ENABLED=true
+RETENTION_MONTHS=3
+RETENTION_UID=<camera date directoryを削除できるUID>
+RETENTION_GID=<そのprimary GID>
+```
+
+手動で実削除だけを行う場合:
+
+```bash
+docker compose --env-file .env run --rm retention retention
+```
+
+削除対象は保持期限を完全に経過した日付directoryのMP4だけです。既定では
+日報とevent JSONで全MP4の処理完了とfingerprint一致を確認します。symlink、
+未知のdirectory、日報・event JSON・SQLiteは削除しません。空になった日付、月、
+年directoryだけを後から取り除きます。
+日報とevent JSONは残るため過去の日報は閲覧できますが、削除済みの日付では
+元動画を再生できなくなります。
+
 ## Exit codes
 
 | Code | Meaning |
@@ -146,6 +177,16 @@ systemd timer と cron の例は次にあります。
 
 systemd timer と cron はどちらか一方だけを使用してください。
 
+systemd版では `scripts/run-scheduled.sh` が同じdeploy lockの内側でanalyzerを実行し、
+成功または部分成功（exit 2）の後にretentionを実行します。致命的な解析失敗
+（exit 1）では削除を開始しません。retentionは期限切れの各日を独立に検証するため、
+当日の部分失敗が過去の処理済みデータの削除を妨げません。
+
+既に `deploy/reolink-analyzer.override.conf` をインストール済みの環境では、変更後の
+unit commandを反映するため、review済みcheckoutから `deploy/install-cd.sh` を再実行し、
+その後にtimer設定を確認してください。自動deployはroot所有のsystemd drop-inを
+書き換えません。
+
 ### Windows Task Scheduler
 
 04:00 に前日分を処理する例です。
@@ -154,7 +195,8 @@ systemd timer と cron はどちらか一方だけを使用してください。
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\path\to\reolink\scripts\run_daily.ps1" -ProjectPath "C:\path\to\reolink" -LogPath "C:\reolink-analysis\daily.log"
 ```
 
-wrapper は `docker compose run --rm analyzer` を1回実行し、その終了コードを返します。
+wrapper は通常の日次実行でanalyzerに続いてopt-inのretentionを実行し、終了コードを返します。
+`-Date` を指定したbackfillではretentionを実行しません。
 
 追加オプション:
 

@@ -10,6 +10,15 @@ paths:
 schedule:
   target: previous_day
 
+retention:
+  # Source deletion is opt-in. Enable it in .env only after the retention
+  # container's UID has permission to remove camera files.
+  enabled: false
+  months: 3
+  # Keep any date whose report is missing, partial, or no longer matches the
+  # current source files.
+  require_processed: true
+
 input:
   stable_seconds: 120
   # Snapshot all files, wait once, and require size+mtime to remain identical.

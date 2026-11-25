@@ -18,6 +18,10 @@ ANALYSIS_OUTPUT_DIR=/srv/reolink-analysis/output
 ANALYSIS_STATE_DIR=/srv/reolink-analysis/state
 ANALYZER_UID=10001
 ANALYZER_GID=10001
+RETENTION_ENABLED=false
+RETENTION_MONTHS=3
+RETENTION_UID=10001
+RETENTION_GID=10010
 
 GENAI_PROVIDER=openai
 GENAI_MODEL=gpt-6-luna
@@ -55,6 +59,31 @@ input:
 /srv/reolink/2026/08/16/*.mp4
 /srv/reolink/2026-08-16/*.mp4
 ```
+
+### Source retention
+
+元動画の自動削除は既定で無効です。保持期限と処理済み確認は
+`config/config.yaml` の次の設定で管理します。
+
+```yaml
+retention:
+  enabled: false
+  months: 3
+  require_processed: true
+```
+
+本番では `.env` の `RETENTION_ENABLED=true` で有効化できます。
+`RETENTION_MONTHS` は暦月単位です。たとえば11月26日の実行では8月26日を
+丸ごと保持し、8月25日以前を候補にします。
+
+`require_processed: true` の場合、日報に失敗・不安定な動画がなく、現在の
+MP4がevent JSONのfingerprintと一致する日だけを削除します。不完全な日は
+警告を残して保持します。日報、event JSON、SQLiteは削除しません。
+
+retentionサービスだけがカメラ領域をread/writeでmountします。
+`RETENTION_UID` / `RETENTION_GID` には日付directoryからファイルを削除できる
+非root identityを指定してください。削除には親directoryへのwriteとsearch権限が
+必要なため、MP4を読めるだけの`CAMERA_GID`では不十分です。
 
 ### Frame extraction
 

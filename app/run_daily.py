@@ -35,7 +35,13 @@ from app.models import (
     PersonType,
     SCHEMA_VERSION,
 )
-from app.state import CacheKey, FileFingerprint, ProcessingClaim, StateStore
+from app.state import (
+    CacheKey,
+    FileFingerprint,
+    ProcessingClaim,
+    StateStore,
+    fingerprint_digest,
+)
 from app.triage import HistoryEntry, TriageOutcome, run_triage
 from app.triage_eval import (
     create_case_from_event,
@@ -91,6 +97,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _single_command(arguments[1:])
         if arguments and arguments[0] == "triage-eval":
             return _triage_eval_command(arguments[1:])
+        if arguments and arguments[0] == "retention":
+            from app.retention import main as retention_main
+
+            return retention_main(arguments[1:])
         return _daily_command(arguments)
     except KeyboardInterrupt:
         LOGGER.error("interrupted")
@@ -554,7 +564,7 @@ def _process_day_batched(
                     source_file=video.name,
                     recording_start=recording_start,
                     analysis_signature=key.prompt_version,
-                    source_fingerprint=_fingerprint_digest(fingerprint),
+                    source_fingerprint=fingerprint_digest(fingerprint),
                     expected_snapshot=previous_snapshot,
                 )
                 pending.append(
@@ -752,7 +762,7 @@ def _process_one(
             source_file=video.name,
             recording_start=recording_start,
             analysis_signature=key.prompt_version,
-            source_fingerprint=_fingerprint_digest(fingerprint),
+            source_fingerprint=fingerprint_digest(fingerprint),
             expected_snapshot=expected_snapshot,
         )
         _store_event(
@@ -953,7 +963,7 @@ def _load_cached_event(
         "model": key.model,
         "schema_version": key.schema_version,
         "analysis_signature": key.prompt_version,
-        "source_fingerprint": _fingerprint_digest(fingerprint),
+        "source_fingerprint": fingerprint_digest(fingerprint),
     }
     actual = {
         "event_id": event.event_id,
@@ -1076,18 +1086,6 @@ def _configured_file_digest(path: Path) -> str:
 def _event_id(target_date: date, source_path: str) -> str:
     digest = hashlib.sha256(source_path.encode("utf-8")).hexdigest()[:12]
     return f"{target_date:%Y%m%d}-{digest}"
-
-
-def _fingerprint_digest(fingerprint: FileFingerprint) -> str:
-    value = {
-        "source_path": fingerprint.source_path,
-        "size_bytes": fingerprint.size_bytes,
-        "mtime_ns": fingerprint.mtime_ns,
-        "content_hash": fingerprint.content_hash,
-    }
-    return hashlib.sha256(
-        json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
 
 
 def _settings(explicit_path: Path | None) -> AppSettings:

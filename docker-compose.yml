@@ -59,6 +59,39 @@ services:
       - analyzer_egress
     restart: "no"
 
+  retention:
+    image: reolink-daily-observer:local
+    user: "${RETENTION_UID:-10001}:${RETENTION_GID:-10010}"
+    group_add:
+      - "${CAMERA_GID:-10010}"
+      - "${ANALYSIS_GID:-10001}"
+    environment:
+      CONFIG_PATH: /config/config.yaml
+      ANALYZER_RETENTION__ENABLED: ${RETENTION_ENABLED:-false}
+      ANALYZER_RETENTION__MONTHS: ${RETENTION_MONTHS:-3}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      ANALYZER_UMASK: ${ANALYZER_UMASK:-0027}
+    volumes:
+      # This is the only service allowed to mutate source recordings.
+      - type: bind
+        source: ${CAMERA_INPUT_DIR}
+        target: /data/input
+      - type: bind
+        source: ${ANALYSIS_OUTPUT_DIR}
+        target: /data/output
+        read_only: true
+      - type: bind
+        source: ./config
+        target: /config
+        read_only: true
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    network_mode: none
+    restart: "no"
+
   viewer:
     build:
       context: .
