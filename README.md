@@ -70,7 +70,7 @@ docker compose --env-file .env up -d viewer nginx
 
 ## プライバシーと公開範囲
 
-- 入力 MP4 は read-only でマウントし、移動・変更・削除しません。
+- analyzer と nginx は入力 MP4 を read-only でマウントします。任意で有効化する retention サービスだけが、処理済みで保持期限を過ぎた MP4 を削除できます。
 - OpenAI API へは、動画から抽出して縮小した JPEG と prompt、および event JSON、scene、日報履歴などのテキストを送信します。元の MP4 自体は直接送信しません。
 - MP4、event JSON、日報、SQLite、ログ、`config/scene.yaml` には、人物の行動や在宅状況などが含まれ得ます。機密データとして保護してください。
 - `.env` と `config/scene.yaml` は Git と Docker build context の除外対象ですが、強制追加や誤った公開までは防げません。

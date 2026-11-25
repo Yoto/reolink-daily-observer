@@ -4,7 +4,7 @@ Reolink Daily Observer は、Reolink RLC-823S1 が FTP 転送した MP4 を日�
 
 ## System boundary
 
-録画と人物検知はカメラ側の責務です。このシステムは FTP などで保存済みの動画から処理を開始し、入力動画を変更しません。
+録画と人物検知はカメラ側の責務です。このシステムは FTP などで保存済みの動画から処理を開始します。analyzerは入力動画を変更しません。任意のretentionサービスだけが、処理済み確認と保持期限判定の後に元動画を削除します。
 
 ```mermaid
 flowchart LR
@@ -12,6 +12,9 @@ flowchart LR
     MP4 --> Analyzer["映像を解析"]
     Analyzer --> Report["日報を生成"]
     Report --> Viewer["ブラウザで表示"]
+    MP4 --> Retention["保持期限と処理済みを確認"]
+    Report --> Retention
+    Retention --> Delete["期限切れMP4を削除"]
 ```
 
 analyzer は動画ごとに客観的な観察結果を event JSON として記録し、それらを撮影場所の説明や過去の日報と照合して `daily_report.json` を生成します。viewer は日報を既定で表示し、必要に応じて解析の詳細や元動画も表示します。
@@ -25,7 +28,7 @@ analyzer は動画ごとに客観的な観察結果を event JSON として記�
 - **観察と判定を分離する。** event JSON は映像から直接確認できる事実だけを記録し、危険性や犯罪可能性の判定を含めません。
 - **判定をテキストだけで再実行できるようにする。** triage は event JSON と scene、直近の日報履歴を読み、画像を扱いません。
 - **モデル応答をそのまま信頼しない。** event ID、時刻、ファイル名などローカルで検証できる情報は元の event 記録と突き合わせます。
-- **入力映像を変更しない。** MP4 は read-only で mount し、移動・変更・削除しません。
+- **解析と削除の権限を分離する。** analyzer は MP4 を read-only で mountし、networkを持たないretentionだけが検証済みの期限切れMP4を削除します。
 - **部分失敗を隠さない。** 一部の動画や triage が失敗しても可能な範囲で日報を生成し、終了コードと出力へ失敗状態を反映します。
 
 ## Processing pipeline

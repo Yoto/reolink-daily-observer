@@ -94,6 +94,20 @@ class FileFingerprint(SchemaModel):
         )
 
 
+def fingerprint_digest(fingerprint: FileFingerprint) -> str:
+    """Return the stable digest stored in event processing metadata."""
+
+    value = {
+        "source_path": fingerprint.source_path,
+        "size_bytes": fingerprint.size_bytes,
+        "mtime_ns": fingerprint.mtime_ns,
+        "content_hash": fingerprint.content_hash,
+    }
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
 class CacheKey(SchemaModel):
     fingerprint: FileFingerprint
     provider: NonEmptyText

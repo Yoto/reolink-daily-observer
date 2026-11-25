@@ -48,9 +48,32 @@ try {
     else {
         & $docker @arguments
     }
-    $exitCode = $LASTEXITCODE
+    $analyzerExitCode = $LASTEXITCODE
+
+    # A dated invocation is a manual backfill and must not have the unrelated
+    # side effect of deleting old recordings. Scheduled previous-day runs also
+    # invoke the opt-in retention service after success or partial success.
+    if (-not $Date -and ($analyzerExitCode -eq 0 -or $analyzerExitCode -eq 2)) {
+        $retentionArguments = @(
+            'compose', '--project-directory', $project,
+            '--env-file', $envFile,
+            '-f', $composeFile,
+            'run', '--rm', 'retention', 'retention'
+        )
+        if ($LogPath) {
+            & $docker @retentionArguments 2>&1 | Tee-Object -FilePath $LogPath -Append
+        }
+        else {
+            & $docker @retentionArguments
+        }
+        $retentionExitCode = $LASTEXITCODE
+        if ($retentionExitCode -ne 0) {
+            $ErrorActionPreference = $previousPreference
+            exit $retentionExitCode
+        }
+    }
     $ErrorActionPreference = $previousPreference
-    exit $exitCode
+    exit $analyzerExitCode
 }
 catch {
     [Console]::Error.WriteLine($_.Exception.Message)

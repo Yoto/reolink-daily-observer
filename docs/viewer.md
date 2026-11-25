@@ -50,6 +50,7 @@ event ID、cache利用状況、処理エラーの詳細は表示しません。�
 | Service | camera | output | state |
 | --- | --- | --- | --- |
 | analyzer | read (`CAMERA_GID`) | read/write (`ANALYSIS_GID`) | read/write |
+| retention | read/write (`RETENTION_UID`) | read (`ANALYSIS_GID`) | none |
 | viewer | none | read (`ANALYSIS_GID`) | none |
 | nginx | read (`CAMERA_GID`) | none | none |
 
@@ -63,10 +64,11 @@ Windows の Docker Desktop で実行する場合は、bind mount の ID 変換�
 ## Security boundary
 
 - ホストへ公開するのはnginxだけです。viewerとanalyzerには`ports`がありません。
-- 三サービスともnon-root、read-only root filesystem、`cap_drop: ALL`、
+- 全サービスともnon-root、read-only root filesystem、`cap_drop: ALL`、
   `no-new-privileges`で動作します。
 - viewer/nginxは内部frontend networkだけに置き、analyzerのAPI通信networkから分離します。
 - OpenAI API keyはanalyzerへだけ渡されます。
+- retentionはnetworkを持たず、OpenAI API keyも受け取りません。
 - viewerは日付をdate型でparseし、日付directory・JSON内の日付・動画pathを検証します。
   reportのsymlinkは追跡しません。
 - Jinja2 autoescapeを維持し、AI生成文をHTMLとして扱いません。テンプレートで`safe`を

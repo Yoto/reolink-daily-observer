@@ -83,6 +83,14 @@ class ScheduleSettings(SettingsModel):
     target: Literal["previous_day"] = "previous_day"
 
 
+class RetentionSettings(SettingsModel):
+    """Deletion policy for source recordings after their reports are complete."""
+
+    enabled: bool = False
+    months: int = Field(default=3, ge=1, le=120)
+    require_processed: bool = True
+
+
 class InputSettings(SettingsModel):
     stable_seconds: int = Field(default=120, ge=0)
     stability_recheck_sec: float = Field(default=2.0, ge=0, le=30)
@@ -298,6 +306,7 @@ class AppSettings(SettingsModel):
     timezone: Literal["Asia/Tokyo"] = "Asia/Tokyo"
     paths: PathsSettings = Field(default_factory=PathsSettings)
     schedule: ScheduleSettings = Field(default_factory=ScheduleSettings)
+    retention: RetentionSettings = Field(default_factory=RetentionSettings)
     input: InputSettings = Field(default_factory=InputSettings)
     frames: FrameSettings = Field(default_factory=FrameSettings)
     genai: GenAISettings = Field(default_factory=GenAISettings)
@@ -507,6 +516,7 @@ __all__ = [
     "ProcessingSettings",
     "PromptSettings",
     "ReportSettings",
+    "RetentionSettings",
     "ResolutionReductionSettings",
     "RetrySettings",
     "ScheduleSettings",

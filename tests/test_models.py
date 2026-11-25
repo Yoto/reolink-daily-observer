@@ -255,6 +255,18 @@ def test_load_settings_ignores_container_umask_environment_variable() -> None:
     assert settings == AppSettings()
 
 
+def test_retention_settings_support_environment_overrides() -> None:
+    settings = load_settings(
+        environ={
+            "ANALYZER_RETENTION__ENABLED": "true",
+            "ANALYZER_RETENTION__MONTHS": "6",
+        }
+    )
+
+    assert settings.retention.enabled is True
+    assert settings.retention.months == 6
+
+
 def test_load_settings_fails_for_missing_placeholder(tmp_path) -> None:
     config_path = tmp_path / "config.yaml"
     config_path.write_text("genai:\n  model: ${MISSING_MODEL}\n", encoding="utf-8")
